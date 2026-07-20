@@ -180,8 +180,11 @@ function BomTable({
               </td>
               <td>
                 <strong className="cell-primary mono">
-                  {line.part.manufacturerPartNumber?.normalized || line.part.internalPartNumber?.normalized || "—"}
+                  {line.part.manufacturerPartNumber?.normalized || enrichment?.matchedManufacturerPartNumber || line.part.internalPartNumber?.normalized || "—"}
                 </strong>
+                {!line.part.manufacturerPartNumber?.normalized && enrichment?.matchedManufacturerPartNumber && (
+                  <small>{enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} 候选 · 待审核</small>
+                )}
                 {line.part.manufacturerPartNumber && line.part.internalPartNumber && (
                   <small>{line.part.internalPartNumber.normalized}</small>
                 )}
