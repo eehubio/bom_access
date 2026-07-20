@@ -1,6 +1,7 @@
 export interface DigiKeyEnrichmentRequestLine {
   lineId: string;
-  manufacturerPartNumber: string;
+  manufacturerPartNumber?: string;
+  searchQuery?: string;
   footprint?: string | null;
 }
 

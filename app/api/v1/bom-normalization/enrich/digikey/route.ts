@@ -8,9 +8,10 @@ export const maxDuration = 60;
 const requestSchema = z.object({
   lines: z.array(z.object({
     lineId: z.string().min(1).max(128),
-    manufacturerPartNumber: z.string().min(2).max(250),
+    manufacturerPartNumber: z.string().min(2).max(250).optional(),
+    searchQuery: z.string().min(3).max(250).optional(),
     footprint: z.string().max(500).nullable().optional(),
-  })).min(1).max(25),
+  }).refine((line) => line.manufacturerPartNumber || line.searchQuery, "manufacturerPartNumber or searchQuery is required")).min(1).max(25),
 });
 
 export async function POST(request: Request) {

@@ -44,7 +44,7 @@ export function selectDigiKeyMatch(
     (candidate): candidate is DigiKeyProduct => Boolean(candidate && typeof candidate === "object"),
   );
   const exact = candidates.find(
-    (candidate) => comparable(clean(candidate.ManufacturerProductNumber) ?? "") === comparable(line.manufacturerPartNumber),
+    (candidate) => Boolean(line.manufacturerPartNumber) && comparable(clean(candidate.ManufacturerProductNumber) ?? "") === comparable(line.manufacturerPartNumber ?? ""),
   );
   const product = exact ?? candidates[0];
   if (!product) return null;
@@ -53,7 +53,7 @@ export function selectDigiKeyMatch(
   if (!matchedManufacturerPartNumber) return null;
   return {
     lineId: line.lineId,
-    queriedManufacturerPartNumber: line.manufacturerPartNumber,
+    queriedManufacturerPartNumber: line.manufacturerPartNumber ?? line.searchQuery ?? "",
     matchedManufacturerPartNumber,
     manufacturer: clean(product.Manufacturer?.Name),
     package: packageFromParameters(product),
@@ -122,7 +122,7 @@ async function lookup(
       "X-DIGIKEY-Locale-Language": settings.language,
       "X-DIGIKEY-Locale-Currency": settings.currency,
     },
-    body: JSON.stringify({ Keywords: line.manufacturerPartNumber, Limit: 5, Offset: 0 }),
+    body: JSON.stringify({ Keywords: line.manufacturerPartNumber ?? line.searchQuery, Limit: 5, Offset: 0 }),
     cache: "no-store",
   });
   if (response.status === 401) throw new Error("DIGIKEY_SEARCH_UNAUTHORIZED");
@@ -138,26 +138,26 @@ async function lookupMouser(line: DigiKeyEnrichmentRequestLine): Promise<DigiKey
   const response = await fetch(`https://api.mouser.com/api/v1/search/keyword?apiKey=${encodeURIComponent(settings.apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ SearchByKeywordRequest: { keyword: line.manufacturerPartNumber, records: 5, startingRecord: 0, searchOptions: "None" } }),
+    body: JSON.stringify({ SearchByKeywordRequest: { keyword: line.manufacturerPartNumber ?? line.searchQuery, records: 5, startingRecord: 0, searchOptions: "None" } }),
     cache: "no-store",
   });
   if (!response.ok) return null;
   const payload = await response.json() as { SearchResults?: { Parts?: Array<Record<string, unknown>> } };
   const parts = payload.SearchResults?.Parts ?? [];
-  const part = parts.find((candidate) => comparable(clean(candidate.ManufacturerPartNumber) ?? "") === comparable(line.manufacturerPartNumber)) ?? parts[0];
+  const part = parts.find((candidate) => Boolean(line.manufacturerPartNumber) && comparable(clean(candidate.ManufacturerPartNumber) ?? "") === comparable(line.manufacturerPartNumber ?? "")) ?? parts[0];
   const matchedManufacturerPartNumber = clean(part?.ManufacturerPartNumber);
   if (!part || !matchedManufacturerPartNumber) return null;
   return {
     lineId: line.lineId,
-    queriedManufacturerPartNumber: line.manufacturerPartNumber,
+    queriedManufacturerPartNumber: line.manufacturerPartNumber ?? line.searchQuery ?? "",
     matchedManufacturerPartNumber,
     manufacturer: clean(part.Manufacturer),
     package: clean(part.PackageType),
     description: clean(part.Description),
     digiKeyProductNumber: clean(part.MouserPartNumber),
     productUrl: clean(part.ProductDetailUrl),
-    confidence: comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? 0.99 : 0.72,
-    matchType: comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? "exact_mpn" : "candidate",
+    confidence: line.manufacturerPartNumber && comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? 0.99 : 0.62,
+    matchType: line.manufacturerPartNumber && comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? "exact_mpn" : "candidate",
     source: "mouser_search_v1",
   };
 }

@@ -404,11 +404,12 @@ export function BomWorkspace() {
 
   const enrichFromDistributors = async () => {
     const lines = resolvedLines
-      .filter((line) => line.lineType === "component" && line.part.manufacturerPartNumber?.normalized)
+      .filter((line) => line.lineType === "component" && (line.part.manufacturerPartNumber?.normalized || /^(R|C)\d+/i.test(line.referenceDesignators.normalized[0] ?? "")))
       .slice(0, 25)
       .map((line) => ({
         lineId: line.lineId,
-        manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized ?? "",
+        manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized,
+        searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(line.referenceDesignators.normalized[0] ?? "") ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized ?? ""}`,
         footprint: line.engineering.footprint?.normalized ?? null,
       }));
     if (!lines.length) {
@@ -430,7 +431,7 @@ export function BomWorkspace() {
         return;
       }
       setEnrichments(new Map(payload.matches.map((match) => [match.lineId, match])));
-      setEnrichmentStatus(`分销商已返回 ${payload.matches.length} 个候选（${lines.length} 个料号）；结果为外部候选，不会覆盖原始字段。`);
+      setEnrichmentStatus(`分销商已返回 ${payload.matches.length} 个候选（含无料号 R/C）；结果为外部候选，不会覆盖原始字段。`);
     } catch (caught) {
       setEnrichmentStatus(caught instanceof Error ? `分销商查询失败：${caught.message}` : "分销商查询失败，请稍后重试。");
     } finally {
