@@ -4,6 +4,7 @@ export interface DigiKeyEnrichmentRequestLine {
   searchQuery?: string;
   footprint?: string | null;
   isPassive?: boolean;
+  requestedQuantity?: number;
 }
 
 export interface DigiKeyEnrichmentMatch {
@@ -15,6 +16,8 @@ export interface DigiKeyEnrichmentMatch {
   description: string | null;
   digiKeyProductNumber: string | null;
   productUrl: string | null;
+  unitPrice: number | null;
+  currency: "USD";
   confidence: number;
   matchType: "exact_mpn" | "candidate";
   source: "ezplm_parts_api" | "digikey_product_search_v4" | "mouser_search_v1";

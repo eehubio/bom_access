@@ -34,5 +34,5 @@ export async function lookupEzplm(line: DigiKeyEnrichmentRequestLine): Promise<D
   const mpn = clean(part?.mpn);
   if (!part || !mpn) return null;
   const exact = mpn.replace(/[^a-z0-9]/gi, "").toUpperCase() === normalized;
-  return { lineId: line.lineId, queriedManufacturerPartNumber: keyword, matchedManufacturerPartNumber: mpn, manufacturer: clean(part.manufacturer), package: clean(part.footprint), description: clean(part.description) ?? clean(part.name), digiKeyProductNumber: clean(part.id), productUrl: clean(part.pdf), confidence: exact ? 0.99 : 0.78, matchType: exact ? "exact_mpn" : "candidate", source: "ezplm_parts_api" };
+  return { lineId: line.lineId, queriedManufacturerPartNumber: keyword, matchedManufacturerPartNumber: mpn, manufacturer: clean(part.manufacturer), package: clean(part.footprint), description: clean(part.description) ?? clean(part.name), digiKeyProductNumber: clean(part.id), productUrl: clean(part.pdf), unitPrice: null, currency: "USD", confidence: exact ? 0.99 : 0.78, matchType: exact ? "exact_mpn" : "candidate", source: "ezplm_parts_api" };
 }

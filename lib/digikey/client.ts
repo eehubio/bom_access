@@ -12,6 +12,7 @@ type DigiKeyProduct = {
   DigiKeyProductNumber?: unknown;
   ProductUrl?: unknown;
   Parameters?: Array<{ Parameter?: unknown; ValueText?: unknown; Value?: unknown }>;
+  StandardPricing?: Array<{ BreakQuantity?: unknown; UnitPrice?: unknown }>;
 };
 
 type TokenCache = { accessToken: string; expiresAt: number };
@@ -32,6 +33,10 @@ function packageFromParameters(product: DigiKeyProduct): string | null {
     return /^(package \/ case|supplier device package|device package|package)$/.test(name);
   });
   return clean(packageParameter?.ValueText) ?? clean(packageParameter?.Value);
+}
+
+function priceAtQuantity(breaks: DigiKeyProduct["StandardPricing"], quantity = 1): number | null {
+  return (breaks ?? []).map((item) => ({ quantity: Number(item.BreakQuantity), price: Number(item.UnitPrice) })).filter((item) => Number.isFinite(item.quantity) && Number.isFinite(item.price) && item.quantity <= quantity).sort((left, right) => right.quantity - left.quantity)[0]?.price ?? null;
 }
 
 export function selectDigiKeyMatch(
@@ -61,6 +66,8 @@ export function selectDigiKeyMatch(
     description: clean(product.Description?.DetailedDescription) ?? clean(product.Description?.ProductDescription),
     digiKeyProductNumber: clean(product.DigiKeyProductNumber),
     productUrl: clean(product.ProductUrl),
+    unitPrice: priceAtQuantity(product.StandardPricing, line.requestedQuantity),
+    currency: "USD",
     confidence: exact ? 0.99 : 0.72,
     matchType: exact ? "exact_mpn" : "candidate",
     source: "digikey_product_search_v4",
@@ -148,6 +155,8 @@ async function lookupMouser(line: DigiKeyEnrichmentRequestLine): Promise<DigiKey
   const part = parts.find((candidate) => Boolean(line.manufacturerPartNumber) && comparable(clean(candidate.ManufacturerPartNumber) ?? "") === comparable(line.manufacturerPartNumber ?? "")) ?? parts[0];
   const matchedManufacturerPartNumber = clean(part?.ManufacturerPartNumber);
   if (!part || !matchedManufacturerPartNumber) return null;
+  const priceBreaks = Array.isArray(part.PriceBreaks) ? part.PriceBreaks as Array<{ Quantity?: unknown; Price?: unknown }> : [];
+  const unitPrice = priceBreaks.map((item) => ({ quantity: Number(item.Quantity), price: Number(String(item.Price ?? "").replace(/[^0-9.]/g, "")) })).filter((item) => Number.isFinite(item.quantity) && Number.isFinite(item.price) && item.quantity <= (line.requestedQuantity ?? 1)).sort((left, right) => right.quantity - left.quantity)[0]?.price ?? null;
   return {
     lineId: line.lineId,
     queriedManufacturerPartNumber: line.manufacturerPartNumber ?? line.searchQuery ?? "",
@@ -157,6 +166,8 @@ async function lookupMouser(line: DigiKeyEnrichmentRequestLine): Promise<DigiKey
     description: clean(part.Description),
     digiKeyProductNumber: clean(part.MouserPartNumber),
     productUrl: clean(part.ProductDetailUrl),
+    unitPrice,
+    currency: "USD",
     confidence: line.manufacturerPartNumber && comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? 0.99 : 0.62,
     matchType: line.manufacturerPartNumber && comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? "exact_mpn" : "candidate",
     source: "mouser_search_v1",
@@ -196,12 +207,11 @@ export async function enrichWithDistributors(lines: DigiKeyEnrichmentRequestLine
   const unmatchedLineIds: string[] = [];
   for (const line of lines) {
     const ezplmMatch = ezplmConfigured ? await lookupEzplm(line) : null;
-    if (ezplmMatch) { matches.push(ezplmMatch); continue; }
     const results = await Promise.allSettled([
       digiKeyConfigured ? lookup(line, config()!) : Promise.resolve(null),
       mouserConfigured ? lookupMouser(line) : Promise.resolve(null),
     ]);
-    const lineMatches = results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
+    const lineMatches = [ezplmMatch, ...results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : [])].filter((match): match is DigiKeyEnrichmentMatch => Boolean(match)).sort((left, right) => (left.unitPrice ?? Number.POSITIVE_INFINITY) - (right.unitPrice ?? Number.POSITIVE_INFINITY));
     if (lineMatches.length) matches.push(...lineMatches);
     else unmatchedLineIds.push(line.lineId);
   }

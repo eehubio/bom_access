@@ -164,6 +164,7 @@ function BomTable({
             <th>制造商料号 / 内部料号</th>
             <th>描述</th>
             <th>封装</th>
+            <th>单价 (USD)</th>
             <th>装配</th>
             <th>状态</th>
           </tr>
@@ -171,6 +172,7 @@ function BomTable({
         <tbody>
           {lines.map((line, index) => {
             const enrichment = enrichments.get(line.lineId)?.[0];
+            const unitPrice = enrichment?.unitPrice;
             return <tr
               key={line.lineId}
               className={`${selectedLineId === line.lineId ? "selected" : ""} ${line.lineType !== "component" ? "non-component" : ""}`}
@@ -181,6 +183,7 @@ function BomTable({
                 <strong className="cell-primary">{line.referenceDesignators.normalized.join(", ") || "—"}</strong>
                 {line.hierarchy.level > 0 && <span className="mini-tag">L{line.hierarchy.level}</span>}
               </td>
+              <td>{unitPrice === null || unitPrice === undefined ? "—" : <><strong>${unitPrice.toFixed(4)}</strong><small>小计 ${(unitPrice * Number(line.quantity.perAssembly ?? 1)).toFixed(4)}</small></>}</td>
               <td className="qty-col">{line.quantity.perAssembly ?? "AR"}</td>
               <td>
                 {line.part.manufacturer?.normalized || enrichment?.manufacturer || "—"}
@@ -340,7 +343,7 @@ function Inspector({
             <strong>{line.referenceDesignators.normalized.join(", ") || line.lineType}</strong>
             <small>Machine record 保持不可变</small>
           </div>
-          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />查询候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "ezplm_parts_api" ? "ezPLM" : enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {Math.round(enrichment.confidence * 100)}% · {enrichment.matchType === "exact_mpn" ? "精确匹配" : "规格候选"}</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); }}>采用</button></div>)}</div> : null}
+          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />查询候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "ezplm_parts_api" ? "ezPLM" : enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {enrichment.unitPrice === null ? "未提供报价" : `$${enrichment.unitPrice.toFixed(4)} / pcs`} · {Math.round(enrichment.confidence * 100)}%</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); if (enrichment.unitPrice !== null) createPatch("/commercial/unitPrice/normalized", line.commercial.unitPrice?.normalized ?? "", enrichment.unitPrice.toFixed(4), "distributor_price_approved"); }}>采用</button></div>)}</div> : null}
           <div className="edit-section">
             <label>厂商 <em>{confidenceLabel(line.confidence.manufacturer)}</em></label>
             <input value={manufacturer} placeholder="例如：YAGEO" onChange={(event) => setManufacturer(event.target.value)} />
@@ -391,6 +394,10 @@ export function BomWorkspace() {
     return resolvedLines.filter((line) => JSON.stringify(line).toLowerCase().includes(query));
   }, [resolvedLines, search]);
   const selectedLine = resolvedLines.find((line) => line.lineId === selectedLineId) ?? resolvedLines[0];
+  const estimatedBomCost = resolvedLines.reduce((sum, line) => {
+    const price = enrichments.get(line.lineId)?.[0]?.unitPrice;
+    return sum + (price ?? 0) * Number(line.quantity.perAssembly ?? 0);
+  }, 0);
 
   const runNormalization = async (loader: () => ReturnType<typeof parseText>) => {
     setStatus("processing");
@@ -436,6 +443,7 @@ export function BomWorkspace() {
         searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(line.referenceDesignators.normalized[0] ?? "") ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized?.match(/(?:_|^)(\d{4})(?:_|\s|$)/)?.[1] ?? ""}`,
         footprint: line.engineering.footprint?.normalized ?? null,
         isPassive: /^(R|C)\d+/i.test(line.referenceDesignators.normalized[0] ?? ""),
+        requestedQuantity: Number(line.quantity.perAssembly ?? 1),
       }));
     if (!lines.length) {
       setEnrichmentStatus("没有可查询的制造商料号；请先补充型号后再查询。");
@@ -505,7 +513,7 @@ export function BomWorkspace() {
             <div className="result-workspace">
               <div className="result-header">
                 <div><div className="breadcrumb">BOM 标准化 <span>/</span> {result.source.filename}</div><h1>{result.source.filename}</h1><p><span>{result.source.sourceType.toUpperCase()}</span> · {formatBytes(result.source.size)} · SHA256 {result.source.sha256.slice(0, 10)}…</p></div>
-                <div className="result-actions"><div className="search-box"><Search size={15} /><input placeholder="搜索位号、型号、描述…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><button className="button secondary compact" disabled={isEnriching} onClick={enrichFromDistributors}><Sparkles size={14} />{isEnriching ? "分销商查询中" : "分销商补全"}</button><div className="export-menu"><button className="button primary compact" onClick={() => setShowExport((value) => !value)}><ArrowDownToLine size={14} />导出<ChevronDown size={13} /></button>{showExport && <div className="export-popover"><button onClick={() => downloadArtifact("canonical-bom.json", resultToJson(result, patches), "application/json")}>Canonical JSON<span>含 Raw + Evidence + Patch</span></button><button onClick={() => downloadArtifact("canonical-bom.csv", resultToCsv({ ...result, lines: resolvedLines }), "text/csv;charset=utf-8")}>安全 CSV<span>已防止公式注入</span></button></div>}</div></div>
+                <div className="result-actions"><strong className="cost-total">BOM 估算 ${estimatedBomCost.toFixed(2)}</strong><div className="search-box"><Search size={15} /><input placeholder="搜索位号、型号、描述…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><button className="button secondary compact" disabled={isEnriching} onClick={enrichFromDistributors}><Sparkles size={14} />{isEnriching ? "自动补全中" : "自动补全"}</button><div className="export-menu"><button className="button primary compact" onClick={() => setShowExport((value) => !value)}><ArrowDownToLine size={14} />导出<ChevronDown size={13} /></button>{showExport && <div className="export-popover"><button onClick={() => downloadArtifact("canonical-bom.json", resultToJson(result, patches), "application/json")}>Canonical JSON<span>含 Raw + Evidence + Patch</span></button><button onClick={() => downloadArtifact("canonical-bom.csv", resultToCsv({ ...result, lines: resolvedLines }), "text/csv;charset=utf-8")}>安全 CSV<span>已防止公式注入</span></button></div>}</div></div>
               </div>
               {enrichmentStatus && <div className="enrichment-notice"><Sparkles size={15} />{enrichmentStatus}</div>}
               <div className={`quality-banner ${result.quality.reviewRequired ? "review" : "approved"}`}><div>{result.quality.reviewRequired ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}<span>{result.quality.reviewRequired ? "已完成标准化，存在需要确认的项目" : "已通过全部自动审核条件"}</span></div><strong>整体质量 {Math.round(result.quality.overallScore * 100)}%</strong></div>
