@@ -411,7 +411,7 @@ export function BomWorkspace() {
       .map((line) => ({
         lineId: line.lineId,
         manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized,
-        searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(line.referenceDesignators.normalized[0] ?? "") ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized ?? ""}`,
+        searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(line.referenceDesignators.normalized[0] ?? "") ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized?.match(/(?:_|^)(\d{4})(?:_|\s|$)/)?.[1] ?? ""}`,
         footprint: line.engineering.footprint?.normalized ?? null,
       }));
     if (!lines.length) {
@@ -422,7 +422,8 @@ export function BomWorkspace() {
     setEnrichmentStatus("");
     try {
       const batches = Array.from({ length: Math.ceil(lines.length / 25) }, (_, index) => lines.slice(index * 25, (index + 1) * 25));
-      const payloads = await Promise.all(batches.map(async (batch) => {
+      const payloads: DigiKeyEnrichmentResponse[] = [];
+      for (const batch of batches) {
         const response = await fetch("/api/v1/bom-normalization/enrich/digikey", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -430,8 +431,8 @@ export function BomWorkspace() {
         });
         const payload = await response.json() as DigiKeyEnrichmentResponse & { error?: string };
         if (!response.ok) throw new Error(payload.message ?? payload.error ?? "DISTRIBUTOR_ENRICHMENT_FAILED");
-        return payload;
-      }));
+        payloads.push(payload);
+      }
       if (payloads.some((payload) => !payload.configured)) {
         setEnrichmentStatus(payloads.find((payload) => !payload.configured)?.message ?? "分销商 API 尚未配置。");
         return;
