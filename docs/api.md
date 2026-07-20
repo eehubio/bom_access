@@ -50,3 +50,23 @@ machine_record
 ```
 
 每个 Patch 保存目标、基础版本、JSON Pointer 风格路径、旧值、新值、原因和时间。服务端持久化时应增加用户、租户、Evidence IDs 与乐观锁版本。
+
+## DigiKey 制造商料号富化
+
+`POST /api/v1/bom-normalization/enrich/digikey`
+
+该端点仅接受已标准化的最小查询集，不接受完整原始文件：
+
+```json
+{
+  "lines": [
+    {
+      "lineId": "line_123",
+      "manufacturerPartNumber": "TPS62160DSGR",
+      "footprint": "Package_DFN_QFN:QFN-8-1EP"
+    }
+  ]
+}
+```
+
+需要配置服务端 `DIGIKEY_CLIENT_ID` 和 `DIGIKEY_CLIENT_SECRET`。Route Handler 使用 OAuth 2-legged `client_credentials` 获取短期 token，并调用 DigiKey ProductSearch V4 KeywordSearch。响应中的 `matches` 是外部富化候选：`exact_mpn` 的置信度为 99%，其余搜索结果为 72% 候选，需要审核；不会改变 Machine Record、Raw Evidence 或 Patch。DigiKey API 密钥绝不能使用 `NEXT_PUBLIC_` 前缀。

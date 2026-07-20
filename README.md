@@ -12,6 +12,7 @@
 - **证据保留**：Raw Cell、公式、显示值、隐藏状态、合并区域、PDF bbox 和 OCR 置信度。
 - **质量审核**：Qty/RefDes、重复位号、多 MPN、歧义列、Qty=0 与未知列。
 - **非破坏性修改**：`machine_record + approved_patches = resolved_view`。
+- **DigiKey 富化**：按制造商料号补全厂商名称，并返回 DigiKey 产品参数中的封装候选与匹配置信度。
 - **安全导出**：完整 JSON 与防 CSV Formula Injection 的 UTF-8 CSV。
 
 ## 快速开始
@@ -38,6 +39,20 @@ npm run build
 2. 在 Vercel 中导入仓库；Framework Preset 选择 `Next.js`。
 3. Build Command 使用 `npm run build`，无需必填环境变量。
 4. 部署后访问 `/health/live` 与 `/health/ready` 验证状态。
+
+### 配置 DigiKey API
+
+在 DigiKey Developer Portal 为应用订阅 **Product Information V4 / ProductSearch** 后，在 Vercel 项目的 **Settings → Environment Variables** 添加以下 Production（建议 Preview 也添加）变量：
+
+```text
+DIGIKEY_CLIENT_ID=你的 DigiKey OAuth Client ID
+DIGIKEY_CLIENT_SECRET=你的 DigiKey OAuth Client Secret
+DIGIKEY_LOCALE_SITE=US
+DIGIKEY_LOCALE_LANGUAGE=en
+DIGIKEY_LOCALE_CURRENCY=USD
+```
+
+保存后重新部署。不要把 `Client Secret` 放入 GitHub、浏览器代码或 `NEXT_PUBLIC_*` 变量。应用使用 DigiKey OAuth 2-legged `client_credentials` 流程，在服务端获取短期令牌；点击页面的“DigiKey 补全”只会提交 BOM 中含有制造商料号的行，单次最多 25 条。`.env.example` 提供本地变量模板。
 
 也可使用 Vercel CLI：
 
@@ -77,6 +92,10 @@ vercel
 
 返回包含 `columnMappings`、`lines`、`rawFieldDictionary`、`reviewItems`、`quality` 与下游事件摘要。
 
+### `POST /api/v1/bom-normalization/enrich/digikey`
+
+仅在服务端配置 DigiKey 凭证后可用。请求传入最多 25 个 `lineId` 与 `manufacturerPartNumber`；响应将厂商、产品描述、封装候选、DigiKey 料号和精确/候选匹配置信度作为富化层返回，不改写原始字段或人工 Patch。
+
 ## 安全设计
 
 - MIME 与文件头双校验；默认文件上限 25 MB。
@@ -102,7 +121,7 @@ docs/                        架构、API 与已知边界
 - PDF 表格重建基于文本块坐标；复杂无框表格和多栏 PDF 仍需审核。
 - 扫描件/图片使用 Tesseract OCR；首开会下载公开 OCR 运行资源，文件内容仍保留在本地。
 - XLSX 读取公式和缓存显示值但不重新计算；缓存缺失时不会伪造结果。
-- MVP 不做最终 Part Resolution、实时价格库存或自动替代料决策。
+- DigiKey 富化不对没有制造商料号的行猜测厂商；从 Footprint 推断的封装优先于 DigiKey 产品参数候选。富化结果不是最终 Part Resolution、价格库存或自动替代料决策。
 - Vercel Serverless 不适合长时间大批量 OCR；生产规模建议将 OCR 下沉到隔离 Worker。
 
 详细设计见 `docs/architecture.md` 与 `docs/api.md`。

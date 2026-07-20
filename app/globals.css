@@ -437,6 +437,11 @@ button {
   color: var(--navy);
 }
 
+.button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .button.ghost {
   background: transparent;
   border-color: var(--line);
@@ -697,6 +702,19 @@ button {
 
 .result-actions {
   gap: 8px;
+}
+
+.enrichment-notice {
+  align-items: center;
+  background: #effaf8;
+  border: 1px solid #c5ebe5;
+  border-radius: 8px;
+  color: #187c74;
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 9px 12px;
 }
 
 .search-box {
@@ -1267,6 +1285,12 @@ button {
   display: flex;
   flex-direction: column;
   padding: 13px 15px;
+}
+
+.enrichment-context {
+  background: #effaf8;
+  border-color: #c5ebe5;
+  margin-top: 10px;
 }
 
 .source-context span {

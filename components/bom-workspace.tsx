@@ -38,6 +38,7 @@ import type {
   ParseProgress,
   ReviewPatch,
 } from "@/lib/bom/types";
+import type { DigiKeyEnrichmentMatch, DigiKeyEnrichmentResponse } from "@/lib/digikey/types";
 import { createId } from "@/lib/bom/utils";
 import { UploadZone } from "./upload-zone";
 
@@ -136,10 +137,12 @@ function BomTable({
   lines,
   selectedLineId,
   onSelect,
+  enrichments,
 }: {
   lines: CanonicalBomLine[];
   selectedLineId?: string;
   onSelect: (line: CanonicalBomLine) => void;
+  enrichments: Map<string, DigiKeyEnrichmentMatch>;
 }) {
   return (
     <div className="data-table-wrap">
@@ -158,8 +161,9 @@ function BomTable({
           </tr>
         </thead>
         <tbody>
-          {lines.map((line, index) => (
-            <tr
+          {lines.map((line, index) => {
+            const enrichment = enrichments.get(line.lineId);
+            return <tr
               key={line.lineId}
               className={`${selectedLineId === line.lineId ? "selected" : ""} ${line.lineType !== "component" ? "non-component" : ""}`}
               onClick={() => onSelect(line)}
@@ -170,7 +174,10 @@ function BomTable({
                 {line.hierarchy.level > 0 && <span className="mini-tag">L{line.hierarchy.level}</span>}
               </td>
               <td className="qty-col">{line.quantity.perAssembly ?? "AR"}</td>
-              <td>{line.part.manufacturer?.normalized || "—"}</td>
+              <td>
+                {line.part.manufacturer?.normalized || enrichment?.manufacturer || "—"}
+                {!line.part.manufacturer?.normalized && enrichment?.manufacturer && <small>DigiKey {Math.round(enrichment.confidence * 100)}%</small>}
+              </td>
               <td>
                 <strong className="cell-primary mono">
                   {line.part.manufacturerPartNumber?.normalized || line.part.internalPartNumber?.normalized || "—"}
@@ -180,7 +187,10 @@ function BomTable({
                 )}
               </td>
               <td className="description-cell">{line.engineering.description?.normalized || line.engineering.value?.normalized || line.lineType}</td>
-              <td>{line.engineering.package?.normalized || "—"}</td>
+              <td>
+                {line.engineering.package?.normalized || enrichment?.package || "—"}
+                {!line.engineering.package?.normalized && enrichment?.package && <small>产品参数候选</small>}
+              </td>
               <td>
                 {line.assembly.dnp ? <span className="pill neutral">DNP</span> : <span className="pill active">装配</span>}
               </td>
@@ -191,8 +201,8 @@ function BomTable({
                   <span className="status-dot review"><TriangleAlert size={14} />待审核</span>
                 )}
               </td>
-            </tr>
-          ))}
+            </tr>;
+          })}
         </tbody>
       </table>
     </div>
@@ -278,10 +288,12 @@ function Inspector({
   line,
   patches,
   onPatch,
+  enrichment,
 }: {
   line?: CanonicalBomLine;
   patches: ReviewPatch[];
   onPatch: (patch: ReviewPatch) => void;
+  enrichment?: DigiKeyEnrichmentMatch;
 }) {
   const [mpn, setMpn] = useState(line?.part.manufacturerPartNumber?.normalized ?? "");
   const [qty, setQty] = useState(line?.quantity.perAssembly ?? "");
@@ -312,6 +324,7 @@ function Inspector({
             <strong>{line.referenceDesignators.normalized.join(", ") || line.lineType}</strong>
             <small>Machine record 保持不可变</small>
           </div>
+          {enrichment && <div className="source-context enrichment-context"><span>DigiKey 富化结果 · {Math.round(enrichment.confidence * 100)}%</span><strong>{enrichment.manufacturer ?? "未返回厂商"}</strong><small>{enrichment.matchType === "exact_mpn" ? "制造商料号精确匹配" : "候选匹配，建议复核"}{enrichment.package ? ` · 封装候选：${enrichment.package}` : ""}</small></div>}
           <div className="edit-section">
             <label>制造商料号 <em>{confidenceLabel(line.confidence.manufacturer_part_number)}</em></label>
             <input value={mpn} onChange={(event) => setMpn(event.target.value)} />
@@ -341,6 +354,9 @@ export function BomWorkspace() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [showExport, setShowExport] = useState(false);
+  const [enrichments, setEnrichments] = useState<Map<string, DigiKeyEnrichmentMatch>>(new Map());
+  const [enrichmentStatus, setEnrichmentStatus] = useState("");
+  const [isEnriching, setIsEnriching] = useState(false);
 
   const resolvedLines = useMemo(
     () => (result ? applyReviewPatches(result.lines, patches) : []),
@@ -358,6 +374,8 @@ export function BomWorkspace() {
     setError("");
     setPatches([]);
     setResolvedReviewIds(new Set());
+    setEnrichments(new Map());
+    setEnrichmentStatus("");
     try {
       const document = await loader();
       setProgress({ stage: "MAPPING_COLUMNS", progress: 78, detail: "正在识别表头与字段语义" });
@@ -379,7 +397,45 @@ export function BomWorkspace() {
     setStatus("idle");
     setResult(undefined);
     setPatches([]);
+    setEnrichments(new Map());
+    setEnrichmentStatus("");
     setError("");
+  };
+
+  const enrichFromDigiKey = async () => {
+    const lines = resolvedLines
+      .filter((line) => line.lineType === "component" && line.part.manufacturerPartNumber?.normalized)
+      .slice(0, 25)
+      .map((line) => ({
+        lineId: line.lineId,
+        manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized ?? "",
+        footprint: line.engineering.footprint?.normalized ?? null,
+      }));
+    if (!lines.length) {
+      setEnrichmentStatus("没有可查询的制造商料号；请先补充型号后再查询。");
+      return;
+    }
+    setIsEnriching(true);
+    setEnrichmentStatus("");
+    try {
+      const response = await fetch("/api/v1/bom-normalization/enrich/digikey", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lines }),
+      });
+      const payload = await response.json() as DigiKeyEnrichmentResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "DIGIKEY_ENRICHMENT_FAILED");
+      if (!payload.configured) {
+        setEnrichmentStatus(payload.message ?? "DigiKey 尚未配置。");
+        return;
+      }
+      setEnrichments(new Map(payload.matches.map((match) => [match.lineId, match])));
+      setEnrichmentStatus(`DigiKey 已补全 ${payload.matches.length}/${lines.length} 个料号；结果为外部候选，不会覆盖原始字段。`);
+    } catch (caught) {
+      setEnrichmentStatus(caught instanceof Error ? `DigiKey 查询失败：${caught.message}` : "DigiKey 查询失败，请稍后重试。");
+    } finally {
+      setIsEnriching(false);
+    }
   };
 
   return (
@@ -415,8 +471,9 @@ export function BomWorkspace() {
             <div className="result-workspace">
               <div className="result-header">
                 <div><div className="breadcrumb">BOM 标准化 <span>/</span> {result.source.filename}</div><h1>{result.source.filename}</h1><p><span>{result.source.sourceType.toUpperCase()}</span> · {formatBytes(result.source.size)} · SHA256 {result.source.sha256.slice(0, 10)}…</p></div>
-                <div className="result-actions"><div className="search-box"><Search size={15} /><input placeholder="搜索位号、型号、描述…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><div className="export-menu"><button className="button primary compact" onClick={() => setShowExport((value) => !value)}><ArrowDownToLine size={14} />导出<ChevronDown size={13} /></button>{showExport && <div className="export-popover"><button onClick={() => downloadArtifact("canonical-bom.json", resultToJson(result, patches), "application/json")}>Canonical JSON<span>含 Raw + Evidence + Patch</span></button><button onClick={() => downloadArtifact("canonical-bom.csv", resultToCsv({ ...result, lines: resolvedLines }), "text/csv;charset=utf-8")}>安全 CSV<span>已防止公式注入</span></button></div>}</div></div>
+                <div className="result-actions"><div className="search-box"><Search size={15} /><input placeholder="搜索位号、型号、描述…" value={search} onChange={(event) => setSearch(event.target.value)} /></div><button className="button secondary compact" disabled={isEnriching} onClick={enrichFromDigiKey}><Sparkles size={14} />{isEnriching ? "DigiKey 查询中" : "DigiKey 补全"}</button><div className="export-menu"><button className="button primary compact" onClick={() => setShowExport((value) => !value)}><ArrowDownToLine size={14} />导出<ChevronDown size={13} /></button>{showExport && <div className="export-popover"><button onClick={() => downloadArtifact("canonical-bom.json", resultToJson(result, patches), "application/json")}>Canonical JSON<span>含 Raw + Evidence + Patch</span></button><button onClick={() => downloadArtifact("canonical-bom.csv", resultToCsv({ ...result, lines: resolvedLines }), "text/csv;charset=utf-8")}>安全 CSV<span>已防止公式注入</span></button></div>}</div></div>
               </div>
+              {enrichmentStatus && <div className="enrichment-notice"><Sparkles size={15} />{enrichmentStatus}</div>}
               <div className={`quality-banner ${result.quality.reviewRequired ? "review" : "approved"}`}><div>{result.quality.reviewRequired ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}<span>{result.quality.reviewRequired ? "已完成标准化，存在需要确认的项目" : "已通过全部自动审核条件"}</span></div><strong>整体质量 {Math.round(result.quality.overallScore * 100)}%</strong></div>
               <SummaryCards result={result} />
               <div className="content-card">
@@ -424,7 +481,7 @@ export function BomWorkspace() {
                   {([ ["bom", "标准 BOM", result.summary.canonicalLines], ["mapping", "列映射", result.columnMappings.length], ["evidence", "原始证据", Object.keys(selectedLine?.evidence ?? {}).length], ["reviews", "审核任务", result.summary.reviewItems - resolvedReviewIds.size] ] as Array<[MainTab, string, number]>).map(([key, label, count]) => <button className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)} key={key}>{label}<span>{Math.max(0, count)}</span></button>)}
                   <div className="tab-meta"><CircleDot size={13} />源表：{result.table.name} · Header {result.headerRows.map((row) => row + 1).join(", ")}</div>
                 </div>
-                {activeTab === "bom" && <BomTable lines={filteredLines} selectedLineId={selectedLine?.lineId} onSelect={(line) => setSelectedLineId(line.lineId)} />}
+                {activeTab === "bom" && <BomTable lines={filteredLines} selectedLineId={selectedLine?.lineId} onSelect={(line) => setSelectedLineId(line.lineId)} enrichments={enrichments} />}
                 {activeTab === "mapping" && <MappingTable result={result} />}
                 {activeTab === "evidence" && <EvidenceView line={selectedLine} />}
                 {activeTab === "reviews" && <ReviewsView result={result} resolvedIds={resolvedReviewIds} onResolve={(id) => setResolvedReviewIds((current) => new Set([...current, id]))} onSelectLine={(lineId) => { if (lineId) setSelectedLineId(lineId); }} />}
@@ -432,7 +489,7 @@ export function BomWorkspace() {
             </div>
           )}
         </main>
-        {status === "ready" && <Inspector key={selectedLine?.lineId ?? "empty"} line={selectedLine} patches={patches} onPatch={(patch) => setPatches((current) => [...current, patch])} />}
+        {status === "ready" && <Inspector key={selectedLine?.lineId ?? "empty"} line={selectedLine} patches={patches} onPatch={(patch) => setPatches((current) => [...current, patch])} enrichment={selectedLine ? enrichments.get(selectedLine.lineId) : undefined} />}
       </div>
     </div>
   );
