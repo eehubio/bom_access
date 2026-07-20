@@ -120,6 +120,8 @@ async function lookup(
     body: JSON.stringify({ Keywords: line.manufacturerPartNumber, Limit: 5, Offset: 0 }),
     cache: "no-store",
   });
+  if (response.status === 401) throw new Error("DIGIKEY_SEARCH_UNAUTHORIZED");
+  if (response.status === 403) throw new Error("DIGIKEY_PRODUCT_SEARCH_NOT_SUBSCRIBED");
   if (response.status === 429) throw new Error("DIGIKEY_RATE_LIMITED");
   if (!response.ok) throw new Error("DIGIKEY_SEARCH_FAILED");
   return selectDigiKeyMatch(line, await response.json());

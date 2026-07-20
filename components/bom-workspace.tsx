@@ -424,7 +424,7 @@ export function BomWorkspace() {
         body: JSON.stringify({ lines }),
       });
       const payload = await response.json() as DigiKeyEnrichmentResponse & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "DIGIKEY_ENRICHMENT_FAILED");
+      if (!response.ok) throw new Error(payload.message ?? payload.error ?? "DIGIKEY_ENRICHMENT_FAILED");
       if (!payload.configured) {
         setEnrichmentStatus(payload.message ?? "DigiKey 尚未配置。");
         return;

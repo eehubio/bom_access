@@ -184,20 +184,60 @@ function inferCategory(refdes: string[]): string | null {
   return null;
 }
 
-function inferPackageFromFootprint(raw: string): string | null {
+const PASSIVE_SIZES: Record<string, string> = {
+  "0201": "0603",
+  "0402": "1005",
+  "0603": "1608",
+  "0805": "2012",
+  "1206": "3216",
+  "1210": "3225",
+  "1812": "4532",
+  "2010": "5025",
+  "2512": "6332",
+};
+
+function inferManufacturerFromMpn(mpn: string): string | null {
+  const normalized = searchKey(mpn).toUpperCase();
+  const rules: Array<[RegExp, string]> = [
+    [/^MIC\d/, "Microchip Technology"],
+    [/^CH34/, "WCH"],
+    [/^(?:LM|TPS)\d/, "Texas Instruments"],
+    [/^ADA\d/, "Analog Devices"],
+    [/^MACHXO/, "Lattice Semiconductor"],
+    [/^LPC\d/, "NXP Semiconductors"],
+  ];
+  return rules.find(([pattern]) => pattern.test(normalized))?.[1] ?? null;
+}
+
+function inferKiCadPassiveFootprint(refdes: string[], raw: string): string | null {
+  const prefix = refdes.map((value) => value.match(/^([A-Za-z]+)/)?.[1]?.toUpperCase()).filter(Boolean);
+  const library = prefix.length && prefix.every((value) => value === "R")
+    ? "Resistor_SMD:R"
+    : prefix.length && prefix.every((value) => value === "C")
+      ? "Capacitor_SMD:C"
+      : null;
+  if (!library) return null;
+  const size = cleanText(raw).match(/(?:^|[^0-9])(0201|0402|0603|0805|1206|1210|1812|2010|2512)(?!\d)/)?.[1];
+  if (!size) return null;
+  return `${library}_${size}_${PASSIVE_SIZES[size]}Metric`;
+}
+
+function inferPackageFromFootprint(raw: string, refdes: string[]): { value: string; rule: string } | null {
   const footprint = cleanText(raw);
   if (!footprint) return null;
+  const kicadFootprint = inferKiCadPassiveFootprint(refdes, footprint);
+  if (kicadFootprint) return { value: kicadFootprint, rule: "inference:kicad_passive_footprint_from_refdes_and_size" };
   const localName = footprint.split(":").at(-1) ?? footprint;
   const smdSize = localName.match(/(?:^|_)(\d{4})_(\d{4})Metric(?:_|$)/i);
-  if (smdSize) return `${smdSize[1]} (${smdSize[2]} Metric)`;
+  if (smdSize) return { value: `${smdSize[1]} (${smdSize[2]} Metric)`, rule: "inference:package_from_footprint" };
   const simpleSmdSize = localName.match(/(?:^|_)(\d{4})(?:_|$)/);
-  if (simpleSmdSize) return simpleSmdSize[1];
+  if (simpleSmdSize) return { value: simpleSmdSize[1], rule: "inference:package_from_footprint" };
   const sotMatch = localName.match(/\b(SOT)-(\d+(?:-\d+)?)/i);
-  if (sotMatch) return `${sotMatch[1].toUpperCase()}-${sotMatch[2]}`;
+  if (sotMatch) return { value: `${sotMatch[1].toUpperCase()}-${sotMatch[2]}`, rule: "inference:package_from_footprint" };
   const packageMatch = localName.match(/\b(QFN|DFN|MSOP|TSSOP|SSOP|SOIC|SOP|LQFP|BGA|DIP|TO)-?(\d+)/i);
-  if (packageMatch) return `${packageMatch[1].toUpperCase()}-${packageMatch[2]}`;
+  if (packageMatch) return { value: `${packageMatch[1].toUpperCase()}-${packageMatch[2]}`, rule: "inference:package_from_footprint" };
   const connectorMatch = localName.match(/^(USB_Micro-[A-Za-z0-9+-]+)/i);
-  if (connectorMatch) return connectorMatch[1].replace(/_/g, " ");
+  if (connectorMatch) return { value: connectorMatch[1].replace(/_/g, " "), rule: "inference:package_from_footprint" };
   return null;
 }
 
@@ -327,7 +367,9 @@ function normalizeLine(
       ? "inferred_from_refdes"
       : "unknown";
   const explicitPackageRaw = evidenceFor("package") ?? "";
-  const inferredPackage = !explicitPackageRaw ? inferPackageFromFootprint(footprintRaw) : null;
+  const inferredPackage = !explicitPackageRaw ? inferPackageFromFootprint(footprintRaw, refdes.normalized) : null;
+  const explicitManufacturerRaw = evidenceFor("manufacturer");
+  const inferredManufacturer = !explicitManufacturerRaw && mpn ? inferManufacturerFromMpn(mpn.normalized) : null;
 
   const line: CanonicalBomLine = {
     lineId,
@@ -356,7 +398,7 @@ function normalizeLine(
     part: {
       internalPartNumber: textValue(evidenceFor("internal_part_number")),
       customerPartNumber: textValue(evidenceFor("customer_part_number")),
-      manufacturer: textValue(evidenceFor("manufacturer")),
+      manufacturer: textValue(explicitManufacturerRaw) ?? textValue(inferredManufacturer),
       manufacturerPartNumber: mpn,
     },
     engineering: {
@@ -366,7 +408,7 @@ function normalizeLine(
       voltageRating: textValue(evidenceFor("voltage_rating")),
       currentRating: textValue(evidenceFor("current_rating")),
       powerRating: textValue(evidenceFor("power_rating")),
-      package: textValue(explicitPackageRaw) ?? textValue(inferredPackage),
+      package: textValue(explicitPackageRaw) ?? textValue(inferredPackage?.value),
       footprint: textValue(footprintRaw),
       category: cleanText(evidenceFor("category")) || inferCategory(refdes.normalized),
     },
@@ -400,9 +442,16 @@ function normalizeLine(
   if (inferredPackage && footprintEntry) {
     line.evidence.package = {
       ...makeEvidence(document, table, rowIndex, footprintEntry, cells),
-      mappingRule: "inference:package_from_footprint",
+      mappingRule: inferredPackage.rule,
     };
     line.confidence.package = Math.min(footprintEntry.mapping.confidence, 0.9);
+  }
+  if (inferredManufacturer && line.evidence.manufacturer_part_number) {
+    line.evidence.manufacturer = {
+      ...line.evidence.manufacturer_part_number,
+      mappingRule: "inference:manufacturer_from_mpn_prefix",
+    };
+    line.confidence.manufacturer = 0.8;
   }
   const scores = Object.values(confidence).filter((value): value is number => typeof value === "number");
   line.confidence.overall = rounded(geometricMean(scores.length ? scores : [0.55]));

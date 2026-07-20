@@ -74,9 +74,11 @@ describe("normalizeDocument", () => {
 
     expect(result.lines[0]).toMatchObject({
       lineType: "component",
-      engineering: { value: { normalized: "1uF" }, package: { normalized: "0402 (1005 Metric)" } },
+      engineering: { value: { normalized: "1uF" }, package: { normalized: "Capacitor_SMD:C_0402_1005Metric" } },
     });
-    expect(result.lines[1].engineering.category).toBe("passive.resistor");
+    expect(result.lines[1]).toMatchObject({
+      engineering: { category: "passive.resistor", package: { normalized: "Resistor_SMD:R_0402_1005Metric" } },
+    });
     expect(result.lines[2]).toMatchObject({
       lineType: "component",
       part: { manufacturerPartNumber: { normalized: "CH340E" } },
@@ -85,6 +87,33 @@ describe("normalizeDocument", () => {
     expect(result.lines[2].evidence.manufacturer_part_number?.mappingRule).toBe("inference:ic_refdes_value");
     expect(result.lines[3].engineering.package?.normalized).toBe("QFN-32");
     expect(result.lines[4].engineering.package?.normalized).toBe("SOT-23-5");
+  });
+
+  it("infers KiCad R/C footprints and manufacturers from recognized part-number families", () => {
+    const result = normalizeDocument(
+      fixture([
+        ["位号", "数量", "型号", "Footprint"],
+        ["R1", "1", "10k", "0603 (1608 Metric)"],
+        ["C1", "1", "100nF", "0603 (1608 Metric)"],
+        ["U1", "1", "CH340E", "Package_SO:MSOP-10"],
+        ["U2", "1", "MIC5504-3.3YMT5-TR", "Package_TO_SOT_SMD:SOT-23-5"],
+        ["U3", "1", "LM2776DBVR", "Package_TO_SOT_SMD:SOT-23-6"],
+        ["U4", "1", "MachXO2-1200-QFN32", "Package_DFN_QFN:QFN-32"],
+        ["U5", "1", "ADA4851-1YRJZ-RL7", "Package_TO_SOT_SMD:SOT-23-6"],
+      ]),
+    );
+
+    expect(result.lines[0].engineering.package?.normalized).toBe("Resistor_SMD:R_0603_1608Metric");
+    expect(result.lines[1].engineering.package?.normalized).toBe("Capacitor_SMD:C_0603_1608Metric");
+    expect(result.lines[0].evidence.package?.mappingRule).toBe("inference:kicad_passive_footprint_from_refdes_and_size");
+    expect(result.lines.slice(2).map((line) => line.part.manufacturer?.normalized)).toEqual([
+      "WCH",
+      "Microchip Technology",
+      "Texas Instruments",
+      "Lattice Semiconductor",
+      "Analog Devices",
+    ]);
+    expect(result.lines[2].evidence.manufacturer?.mappingRule).toBe("inference:manufacturer_from_mpn_prefix");
   });
 
   it("keeps machine record immutable when applying a patch", () => {
