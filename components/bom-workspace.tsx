@@ -52,6 +52,11 @@ const DEMO_BOM = `序号\t位号\t数量\t厂商\t型号\t描述\t封装\tDNP\t�
 type MainTab = "bom" | "mapping" | "evidence" | "reviews";
 type WorkspaceSection = "bom" | "history" | "rules";
 type AppStatus = "idle" | "processing" | "ready" | "error";
+type HistoryTask = {
+  taskId: string;
+  createdAt: string;
+  result: NormalizationResult;
+};
 
 const PIPELINE = [
   ["SECURITY_SCANNING", "安全扫描"],
@@ -139,8 +144,8 @@ function SummaryCards({ result }: { result: NormalizationResult }) {
   );
 }
 
-function HistoryView({ result, onOpen }: { result?: NormalizationResult; onOpen: () => void }) {
-  return <div className="empty-panel"><History size={30} /><h2>历史任务</h2>{result ? <><p>当前浏览器会话已处理：{result.source.filename}</p><button className="button primary compact" onClick={onOpen}>打开当前任务</button></> : <p>当前会话还没有处理过 BOM。历史任务需要接入数据库后才能跨浏览器保存。</p>}</div>;
+function HistoryView({ tasks, onOpen }: { tasks: HistoryTask[]; onOpen: (task: HistoryTask) => void }) {
+  return <div className="empty-panel"><History size={30} /><h2>历史任务</h2>{tasks.length ? <div className="review-list">{tasks.map((task) => <article className="review-item info" key={task.taskId}><div className="review-severity"><FileClock size={17} /></div><div className="review-copy"><div><strong>{task.result.source.filename}</strong><span>{task.result.source.sourceType.toUpperCase()} · {task.result.summary.canonicalLines} 行</span></div><p>{new Date(task.createdAt).toLocaleString("zh-CN")}</p></div><button className="button ghost compact" onClick={() => onOpen(task)}>打开</button></article>)}</div> : <p>当前会话还没有处理过 BOM。上传并解析后的任务会显示在这里。</p>}</div>;
 }
 
 function RulesView({ onOpen }: { onOpen: () => void }) {
@@ -180,7 +185,9 @@ function BomTable({
         <tbody>
           {lines.map((line, index) => {
             const enrichment = enrichments.get(line.lineId)?.[0];
-            const unitPrice = enrichment?.unitPrice;
+            const rawUnitPrice = line.commercial.unitPrice?.normalized ?? enrichment?.unitPrice;
+            const parsedUnitPrice = Number(rawUnitPrice);
+            const unitPrice = Number.isFinite(parsedUnitPrice) ? parsedUnitPrice : null;
             const isReviewed = reviewedLineIds.has(line.lineId);
             const needsCandidateReview = Boolean(enrichment);
             return <tr
@@ -193,7 +200,6 @@ function BomTable({
                 <strong className="cell-primary">{line.referenceDesignators.normalized.join(", ") || "—"}</strong>
                 {line.hierarchy.level > 0 && <span className="mini-tag">L{line.hierarchy.level}</span>}
               </td>
-              <td>{unitPrice === null || unitPrice === undefined ? "—" : <><strong>${unitPrice.toFixed(4)}</strong><small>小计 ${(unitPrice * Number(line.quantity.perAssembly ?? 1)).toFixed(4)}</small></>}</td>
               <td className="qty-col">{line.quantity.perAssembly ?? "AR"}</td>
               <td>
                 {line.part.manufacturer?.normalized || enrichment?.manufacturer || "—"}
@@ -216,6 +222,7 @@ function BomTable({
                 {enrichment?.source === "ezplm_parts_api" && enrichment.package && <small className="source-ezplm">ezPLM KiCad 封装</small>}
                 {enrichment?.source !== "ezplm_parts_api" && !line.engineering.package?.normalized && enrichment?.package && <small>产品参数候选</small>}
               </td>
+              <td>{unitPrice === null ? "—" : <><strong>${unitPrice.toFixed(4)}</strong><small>小计 ${(unitPrice * Number(line.quantity.perAssembly ?? 1)).toFixed(4)}</small></>}</td>
               <td>
                 {line.assembly.dnp ? <span className="pill neutral">DNP</span> : <span className="pill active">装配</span>}
               </td>
@@ -355,7 +362,7 @@ function Inspector({
             <strong>{line.referenceDesignators.normalized.join(", ") || line.lineType}</strong>
             <small>Machine record 保持不可变</small>
           </div>
-          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />查询候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "ezplm_parts_api" ? "ezPLM" : enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {enrichment.unitPrice === null ? "未提供报价" : `$${enrichment.unitPrice.toFixed(4)} / pcs`} · {Math.round(enrichment.confidence * 100)}%</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); if (enrichment.unitPrice !== null) createPatch("/commercial/unitPrice/normalized", line.commercial.unitPrice?.normalized ?? "", enrichment.unitPrice.toFixed(4), "distributor_price_approved"); }}>采用</button></div>)}</div> : null}
+          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />查询候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "ezplm_parts_api" ? "ezPLM" : enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {enrichment.unitPrice === null ? "未提供报价" : `$${enrichment.unitPrice.toFixed(4)} / pcs`} · {Math.round(enrichment.confidence * 100)}%</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); if (enrichment.package) createPatch("/engineering/package/normalized", line.engineering.package?.normalized ?? "", enrichment.package, "distributor_package_approved"); if (enrichment.unitPrice !== null) createPatch("/commercial/unitPrice/normalized", line.commercial.unitPrice?.normalized ?? "", enrichment.unitPrice.toFixed(4), "distributor_price_approved"); }}>采用</button></div>)}</div> : null}
           <div className="edit-section">
             <label>厂商 <em>{confidenceLabel(line.confidence.manufacturer)}</em></label>
             <input value={manufacturer} placeholder="例如：YAGEO" onChange={(event) => setManufacturer(event.target.value)} />
@@ -365,6 +372,7 @@ function Inspector({
             <label>制造商料号 <em>{confidenceLabel(line.confidence.manufacturer_part_number)}</em></label>
             <input value={mpn} onChange={(event) => setMpn(event.target.value)} />
             <button className="text-button" onClick={() => createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", mpn, "manual_mpn_review")}>保存为 Patch</button>
+            <small className="muted">保存后，点击顶部“自动补全”可查询该料号的分销商价格和封装。</small>
           </div>
           <div className="edit-row">
             <div className="edit-section"><label>数量 <em>{confidenceLabel(line.confidence.quantity)}</em></label><input value={qty} onChange={(event) => setQty(event.target.value)} /><button className="text-button" onClick={() => createPatch("/quantity/perAssembly", line.quantity.perAssembly, qty, "quantity_review")}>保存</button></div>
@@ -384,6 +392,7 @@ export function BomWorkspace() {
   const [status, setStatus] = useState<AppStatus>("idle");
   const [progress, setProgress] = useState<ParseProgress>({ stage: "RECEIVED", progress: 0, detail: "准备接收文件" });
   const [result, setResult] = useState<NormalizationResult>();
+  const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
   const [activeTab, setActiveTab] = useState<MainTab>("bom");
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("bom");
   const [selectedLineId, setSelectedLineId] = useState<string>();
@@ -408,8 +417,9 @@ export function BomWorkspace() {
   }, [resolvedLines, search]);
   const selectedLine = resolvedLines.find((line) => line.lineId === selectedLineId) ?? resolvedLines[0];
   const estimatedBomCost = resolvedLines.reduce((sum, line) => {
-    const price = enrichments.get(line.lineId)?.[0]?.unitPrice;
-    return sum + (price ?? 0) * Number(line.quantity.perAssembly ?? 0);
+    const rawPrice = line.commercial.unitPrice?.normalized ?? enrichments.get(line.lineId)?.[0]?.unitPrice;
+    const price = Number(rawPrice);
+    return sum + (Number.isFinite(price) ? price : 0) * Number(line.quantity.perAssembly ?? 0);
   }, 0);
 
   const runNormalization = async (loader: () => ReturnType<typeof parseText>) => {
@@ -427,6 +437,7 @@ export function BomWorkspace() {
       const normalized = normalizeDocument(document);
       setProgress({ stage: "QUALITY_EVALUATING", progress: 96, detail: "正在检查数量、位号和冲突" });
       setResult(normalized);
+      setHistoryTasks((current) => [{ taskId: createId("task"), createdAt: new Date().toISOString(), result: normalized }, ...current.filter((task) => task.result.source.sha256 !== normalized.source.sha256)].slice(0, 20));
       setSelectedLineId(normalized.lines[0]?.lineId);
       setStatus("ready");
     } catch (caught) {
@@ -519,7 +530,7 @@ export function BomWorkspace() {
         </nav>
 
         <main className={`workspace ${status === "ready" ? "has-inspector" : ""}`}>
-          {activeSection === "history" ? <HistoryView result={result} onOpen={() => setActiveSection("bom")} /> : activeSection === "rules" ? <RulesView onOpen={() => setActiveSection("bom")} /> : <>
+          {activeSection === "history" ? <HistoryView tasks={historyTasks} onOpen={(task) => { setResult(task.result); setSelectedLineId(task.result.lines[0]?.lineId); setPatches([]); setReviewedLineIds(new Set()); setEnrichments(new Map()); setEnrichmentStatus(""); setStatus("ready"); setActiveSection("bom"); }} /> : activeSection === "rules" ? <RulesView onOpen={() => setActiveSection("bom")} /> : <>
           {status === "idle" && <UploadZone onFile={handleFile} onPaste={handleText} onDemo={() => handleText(DEMO_BOM)} />}
           {status === "processing" && <LoadingView progress={progress} />}
           {status === "error" && <div className="error-view"><TriangleAlert size={34} /><h2>无法处理这份文件</h2><code>{error}</code><p>请检查格式、文件大小或是否已加密，然后重试。</p><button className="button primary" onClick={reset}><RefreshCw size={15} />重新开始</button></div>}
