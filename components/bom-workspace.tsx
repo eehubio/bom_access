@@ -181,6 +181,8 @@ function BomTable({
           {lines.map((line, index) => {
             const enrichment = enrichments.get(line.lineId)?.[0];
             const unitPrice = enrichment?.unitPrice;
+            const isReviewed = reviewedLineIds.has(line.lineId);
+            const needsCandidateReview = Boolean(enrichment);
             return <tr
               key={line.lineId}
               className={`${selectedLineId === line.lineId ? "selected" : ""} ${line.lineType !== "component" ? "non-component" : ""}`}
@@ -218,7 +220,9 @@ function BomTable({
                 {line.assembly.dnp ? <span className="pill neutral">DNP</span> : <span className="pill active">装配</span>}
               </td>
               <td>
-                {line.reviewStatus === "auto_approved" || reviewedLineIds.has(line.lineId) ? (
+                {isReviewed ? (
+                  <span className="status-dot approved"><CheckCircle2 size={14} />已审核</span>
+                ) : !needsCandidateReview && line.reviewStatus === "auto_approved" ? (
                   <span className="status-dot approved"><CheckCircle2 size={14} />已通过</span>
                 ) : (
                   <span className="status-dot review"><TriangleAlert size={14} />待审核</span>
