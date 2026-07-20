@@ -184,7 +184,7 @@ function BomTable({
               <td className="qty-col">{line.quantity.perAssembly ?? "AR"}</td>
               <td>
                 {line.part.manufacturer?.normalized || enrichment?.manufacturer || "—"}
-                {!line.part.manufacturer?.normalized && enrichment?.manufacturer && <small className={enrichment.source === "ezplm_parts_api" ? "source-ezplm" : ""}>{enrichmentSourceLabel(enrichment)} {Math.round(enrichment.confidence * 100)}%</small>}
+                {enrichment?.manufacturer && <small className={enrichment.source === "ezplm_parts_api" ? "source-ezplm" : ""}>{enrichmentSourceLabel(enrichment)} {Math.round(enrichment.confidence * 100)}%</small>}
               </td>
               <td>
                 <strong className="cell-primary mono">
@@ -199,8 +199,9 @@ function BomTable({
               </td>
               <td className="description-cell">{line.engineering.description?.normalized || line.engineering.value?.normalized || line.lineType}</td>
               <td>
-                {line.engineering.package?.normalized || enrichment?.package || "—"}
-                {!line.engineering.package?.normalized && enrichment?.package && <small>产品参数候选</small>}
+                {enrichment?.source === "ezplm_parts_api" && enrichment.package || line.engineering.package?.normalized || enrichment?.package || "—"}
+                {enrichment?.source === "ezplm_parts_api" && enrichment.package && <small className="source-ezplm">ezPLM KiCad 封装</small>}
+                {enrichment?.source !== "ezplm_parts_api" && !line.engineering.package?.normalized && enrichment?.package && <small>产品参数候选</small>}
               </td>
               <td>
                 {line.assembly.dnp ? <span className="pill neutral">DNP</span> : <span className="pill active">装配</span>}
