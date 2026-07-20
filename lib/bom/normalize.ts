@@ -82,6 +82,14 @@ function classifyLine(row: string[], entries: Partial<Record<CanonicalField, str
   const joined = row.join(" ").toLowerCase();
   if (/^(total|subtotal|合计|小计)/i.test(cleanText(joined))) return "subtotal";
   if (/^(note|remark|备注|说明)[:：]?/i.test(cleanText(joined))) return "note";
+  if (
+    entries.reference_designators ||
+    entries.manufacturer_part_number ||
+    entries.internal_part_number ||
+    entries.quantity
+  ) {
+    return "component";
+  }
   if (/pcb\s*fab|printed circuit board|裸板|线路板/.test(joined)) return "pcb";
   if (/firmware|固件/.test(joined)) return "firmware";
   if (/assembly labor|labor|工时|人工/.test(joined)) return "labor";
@@ -97,14 +105,6 @@ function classifyLine(row: string[], entries: Partial<Record<CanonicalField, str
     !entries.reference_designators
   ) {
     return "group_header";
-  }
-  if (
-    entries.reference_designators ||
-    entries.manufacturer_part_number ||
-    entries.internal_part_number ||
-    entries.quantity
-  ) {
-    return "component";
   }
   return "unknown";
 }
@@ -167,6 +167,40 @@ function parseMpn(raw: string): CanonicalBomLine["part"]["manufacturerPartNumber
   };
 }
 
+function isIntegratedCircuit(refdes: string[]): boolean {
+  return refdes.some((value) => /^U\d+$/i.test(value));
+}
+
+function inferCategory(refdes: string[]): string | null {
+  const prefixes = refdes.map((value) => value.match(/^([A-Za-z]+)/)?.[1]?.toUpperCase()).filter(Boolean);
+  if (!prefixes.length) return null;
+  if (prefixes.every((prefix) => prefix === "R")) return "passive.resistor";
+  if (prefixes.every((prefix) => prefix === "C")) return "passive.capacitor";
+  if (prefixes.every((prefix) => prefix === "L")) return "passive.inductor";
+  if (prefixes.every((prefix) => prefix === "D" || prefix === "LED")) return "active.diode";
+  if (prefixes.every((prefix) => prefix === "U")) return "active.integrated_circuit";
+  if (prefixes.every((prefix) => prefix === "J")) return "electromechanical.connector";
+  if (prefixes.every((prefix) => prefix === "SW")) return "electromechanical.switch";
+  return null;
+}
+
+function inferPackageFromFootprint(raw: string): string | null {
+  const footprint = cleanText(raw);
+  if (!footprint) return null;
+  const localName = footprint.split(":").at(-1) ?? footprint;
+  const smdSize = localName.match(/(?:^|_)(\d{4})_(\d{4})Metric(?:_|$)/i);
+  if (smdSize) return `${smdSize[1]} (${smdSize[2]} Metric)`;
+  const simpleSmdSize = localName.match(/(?:^|_)(\d{4})(?:_|$)/);
+  if (simpleSmdSize) return simpleSmdSize[1];
+  const sotMatch = localName.match(/\b(SOT)-(\d+(?:-\d+)?)/i);
+  if (sotMatch) return `${sotMatch[1].toUpperCase()}-${sotMatch[2]}`;
+  const packageMatch = localName.match(/\b(QFN|DFN|MSOP|TSSOP|SSOP|SOIC|SOP|LQFP|BGA|DIP|TO)-?(\d+)/i);
+  if (packageMatch) return `${packageMatch[1].toUpperCase()}-${packageMatch[2]}`;
+  const connectorMatch = localName.match(/^(USB_Micro-[A-Za-z0-9+-]+)/i);
+  if (connectorMatch) return connectorMatch[1].replace(/_/g, " ");
+  return null;
+}
+
 function variantRules(row: string[], mappings: ColumnMapping[]): CanonicalBomLine["assembly"]["variantRules"] {
   return mappings
     .filter((mapping) => mapping.targetField === "quantity" && mapping.variantName)
@@ -209,6 +243,10 @@ function normalizeLine(
   const refdes = parseReferenceDesignators(refdesRaw);
   const quantityRaw = evidenceFor("quantity") ?? "";
   const quantity = parseQuantity(quantityRaw);
+  const valueEntry = getEntry(row, mappings, "value");
+  const valueRaw = evidenceFor("value") ?? "";
+  const footprintEntry = getEntry(row, mappings, "footprint");
+  const footprintRaw = evidenceFor("footprint") ?? "";
   const notes = evidenceFor("notes") ?? "";
   const dnpRaw = evidenceFor("dnp") ?? "";
   const dnp = determineDnp(dnpRaw, notes, quantity.value);
@@ -256,7 +294,15 @@ function normalizeLine(
   }
 
   const mpnRaw = evidenceFor("manufacturer_part_number") ?? "";
-  const mpn = parseMpn(mpnRaw);
+  const inferredMpnFromValue = !mpnRaw && isIntegratedCircuit(refdes.normalized) && Boolean(valueRaw);
+  const mpn = parseMpn(inferredMpnFromValue ? valueRaw : mpnRaw);
+  if (inferredMpnFromValue && valueEntry) {
+    evidence.manufacturer_part_number = {
+      ...makeEvidence(document, table, rowIndex, valueEntry, cells),
+      mappingRule: "inference:ic_refdes_value",
+    };
+    confidence.manufacturer_part_number = Math.min(valueEntry.mapping.confidence, 0.9);
+  }
   if (mpn && mpn.alternateCandidates.length) {
     addIssue("MPN_AMBIGUOUS", "单元格包含多个型号", `候选：${[mpn.normalized, ...mpn.alternateCandidates].join("、")}`);
   }
@@ -280,6 +326,8 @@ function normalizeLine(
     : refdes.physicalCount > 0
       ? "inferred_from_refdes"
       : "unknown";
+  const explicitPackageRaw = evidenceFor("package") ?? "";
+  const inferredPackage = !explicitPackageRaw ? inferPackageFromFootprint(footprintRaw) : null;
 
   const line: CanonicalBomLine = {
     lineId,
@@ -313,14 +361,14 @@ function normalizeLine(
     },
     engineering: {
       description: textValue(evidenceFor("description")),
-      value: textValue(evidenceFor("value")),
+      value: textValue(valueRaw),
       tolerance: textValue(evidenceFor("tolerance")),
       voltageRating: textValue(evidenceFor("voltage_rating")),
       currentRating: textValue(evidenceFor("current_rating")),
       powerRating: textValue(evidenceFor("power_rating")),
-      package: textValue(evidenceFor("package")),
-      footprint: textValue(evidenceFor("footprint")),
-      category: cleanText(evidenceFor("category")) || null,
+      package: textValue(explicitPackageRaw) ?? textValue(inferredPackage),
+      footprint: textValue(footprintRaw),
+      category: cleanText(evidenceFor("category")) || inferCategory(refdes.normalized),
     },
     sourcing: {
       supplier: textValue(evidenceFor("supplier")),
@@ -349,6 +397,13 @@ function normalizeLine(
         ? "review_required"
         : "auto_approved",
   };
+  if (inferredPackage && footprintEntry) {
+    line.evidence.package = {
+      ...makeEvidence(document, table, rowIndex, footprintEntry, cells),
+      mappingRule: "inference:package_from_footprint",
+    };
+    line.confidence.package = Math.min(footprintEntry.mapping.confidence, 0.9);
+  }
   const scores = Object.values(confidence).filter((value): value is number => typeof value === "number");
   line.confidence.overall = rounded(geometricMean(scores.length ? scores : [0.55]));
   return line;

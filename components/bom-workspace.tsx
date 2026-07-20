@@ -179,7 +179,7 @@ function BomTable({
                   <small>{line.part.internalPartNumber.normalized}</small>
                 )}
               </td>
-              <td className="description-cell">{line.engineering.description?.normalized || line.lineType}</td>
+              <td className="description-cell">{line.engineering.description?.normalized || line.engineering.value?.normalized || line.lineType}</td>
               <td>{line.engineering.package?.normalized || "—"}</td>
               <td>
                 {line.assembly.dnp ? <span className="pill neutral">DNP</span> : <span className="pill active">装配</span>}

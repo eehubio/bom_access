@@ -60,6 +60,33 @@ describe("normalizeDocument", () => {
     expect(result.quality.reviewReasons).toContain("DUPLICATE_REFDES");
   });
 
+  it("infers IC part numbers and packages from a compact KiCad BOM", () => {
+    const result = normalizeDocument(
+      fixture([
+        ["Qty", "Reference(s)", "Value", "Footprint"],
+        ["3", "C1, C3, C5", "1uF", "Capacitor_SMD:C_0402_1005Metric"],
+        ["4", "R1, R2, R3, R4", "2k", "Resistor_SMD:R_0402_1005Metric"],
+        ["1", "U1", "CH340E", "Package_SO:MSOP-10_3x3mm_P0.5mm"],
+        ["1", "U2", "LPC824M201JHI33", "Package_DFN_QFN:QFN-32-1EP_5x5mm_P0.5mm_EP3.45x3.45mm"],
+        ["1", "U3", "MIC5504-3.3", "Package_TO_SOT_SMD:SOT-23-5"],
+      ]),
+    );
+
+    expect(result.lines[0]).toMatchObject({
+      lineType: "component",
+      engineering: { value: { normalized: "1uF" }, package: { normalized: "0402 (1005 Metric)" } },
+    });
+    expect(result.lines[1].engineering.category).toBe("passive.resistor");
+    expect(result.lines[2]).toMatchObject({
+      lineType: "component",
+      part: { manufacturerPartNumber: { normalized: "CH340E" } },
+      engineering: { package: { normalized: "MSOP-10" } },
+    });
+    expect(result.lines[2].evidence.manufacturer_part_number?.mappingRule).toBe("inference:ic_refdes_value");
+    expect(result.lines[3].engineering.package?.normalized).toBe("QFN-32");
+    expect(result.lines[4].engineering.package?.normalized).toBe("SOT-23-5");
+  });
+
   it("keeps machine record immutable when applying a patch", () => {
     const result = normalizeDocument(
       fixture([
