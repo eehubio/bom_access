@@ -144,11 +144,13 @@ function BomTable({
   selectedLineId,
   onSelect,
   enrichments,
+  reviewedLineIds,
 }: {
   lines: CanonicalBomLine[];
   selectedLineId?: string;
   onSelect: (line: CanonicalBomLine) => void;
   enrichments: Map<string, DigiKeyEnrichmentMatch[]>;
+  reviewedLineIds: Set<string>;
 }) {
   return (
     <div className="data-table-wrap">
@@ -204,7 +206,7 @@ function BomTable({
                 {line.assembly.dnp ? <span className="pill neutral">DNP</span> : <span className="pill active">装配</span>}
               </td>
               <td>
-                {line.reviewStatus === "auto_approved" ? (
+                {line.reviewStatus === "auto_approved" || reviewedLineIds.has(line.lineId) ? (
                   <span className="status-dot approved"><CheckCircle2 size={14} />已通过</span>
                 ) : (
                   <span className="status-dot review"><TriangleAlert size={14} />待审核</span>
@@ -298,14 +300,17 @@ function Inspector({
   patches,
   onPatch,
   enrichments,
+  onMarkReviewed,
 }: {
   line?: CanonicalBomLine;
   patches: ReviewPatch[];
   onPatch: (patch: ReviewPatch) => void;
   enrichments?: DigiKeyEnrichmentMatch[];
+  onMarkReviewed: (lineId: string) => void;
 }) {
   const primaryEnrichment = enrichments?.[0];
   const [mpn, setMpn] = useState(line?.part.manufacturerPartNumber?.normalized ?? primaryEnrichment?.matchedManufacturerPartNumber ?? "");
+  const [manufacturer, setManufacturer] = useState(line?.part.manufacturer?.normalized ?? primaryEnrichment?.manufacturer ?? "");
   const [qty, setQty] = useState(line?.quantity.perAssembly ?? "");
   const [packageValue, setPackageValue] = useState(line?.engineering.package?.normalized ?? "");
 
@@ -336,6 +341,11 @@ function Inspector({
           </div>
           {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />查询候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "ezplm_parts_api" ? "ezPLM" : enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {Math.round(enrichment.confidence * 100)}% · {enrichment.matchType === "exact_mpn" ? "精确匹配" : "规格候选"}</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); }}>采用</button></div>)}</div> : null}
           <div className="edit-section">
+            <label>厂商 <em>{confidenceLabel(line.confidence.manufacturer)}</em></label>
+            <input value={manufacturer} placeholder="例如：YAGEO" onChange={(event) => setManufacturer(event.target.value)} />
+            <button className="text-button" onClick={() => createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", manufacturer, "manual_manufacturer_review")}>保存为 Patch</button>
+          </div>
+          <div className="edit-section">
             <label>制造商料号 <em>{confidenceLabel(line.confidence.manufacturer_part_number)}</em></label>
             <input value={mpn} onChange={(event) => setMpn(event.target.value)} />
             <button className="text-button" onClick={() => createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", mpn, "manual_mpn_review")}>保存为 Patch</button>
@@ -346,6 +356,7 @@ function Inspector({
           </div>
           <div className="evidence-section"><h4><FileSearch size={15} />来源证据</h4>{Object.entries(line.evidence).slice(0, 5).map(([field, evidence]) => evidence && <div className="evidence-line" key={field}><span>{field}</span><strong>{evidence.sheet ? `${evidence.sheet}!${evidence.cellAddress}` : evidence.page ? `P${evidence.page}` : evidence.cellAddress}</strong></div>)}</div>
           <div className="issue-section"><h4><AlertTriangle size={15} />当前问题</h4>{line.issues.length ? line.issues.map((issue) => <span className="issue-chip" key={issue}>{issue}</span>) : <p className="muted">无阻塞问题</p>}</div>
+          <button className="button primary compact" onClick={() => onMarkReviewed(line.lineId)}><CheckCircle2 size={14} />标记本行已审核</button>
           <div className="patch-section"><h4><History size={15} />Patch 历史</h4>{patches.filter((patch) => patch.targetId === line.lineId).map((patch) => <div className="patch-line" key={patch.patchId}><span>{patch.operations[0].path}</span><strong>{String(patch.operations[0].value)}</strong></div>)}{!patches.some((patch) => patch.targetId === line.lineId) && <p className="muted">尚无人工修改</p>}</div>
         </>
       )}
@@ -361,6 +372,7 @@ export function BomWorkspace() {
   const [selectedLineId, setSelectedLineId] = useState<string>();
   const [patches, setPatches] = useState<ReviewPatch[]>([]);
   const [resolvedReviewIds, setResolvedReviewIds] = useState<Set<string>>(new Set());
+  const [reviewedLineIds, setReviewedLineIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [showExport, setShowExport] = useState(false);
@@ -384,6 +396,7 @@ export function BomWorkspace() {
     setError("");
     setPatches([]);
     setResolvedReviewIds(new Set());
+    setReviewedLineIds(new Set());
     setEnrichments(new Map());
     setEnrichmentStatus("");
     try {
@@ -407,6 +420,7 @@ export function BomWorkspace() {
     setStatus("idle");
     setResult(undefined);
     setPatches([]);
+    setReviewedLineIds(new Set());
     setEnrichments(new Map());
     setEnrichmentStatus("");
     setError("");
@@ -500,7 +514,7 @@ export function BomWorkspace() {
                   {([ ["bom", "标准 BOM", result.summary.canonicalLines], ["mapping", "列映射", result.columnMappings.length], ["evidence", "原始证据", Object.keys(selectedLine?.evidence ?? {}).length], ["reviews", "审核任务", result.summary.reviewItems - resolvedReviewIds.size] ] as Array<[MainTab, string, number]>).map(([key, label, count]) => <button className={activeTab === key ? "active" : ""} onClick={() => setActiveTab(key)} key={key}>{label}<span>{Math.max(0, count)}</span></button>)}
                   <div className="tab-meta"><CircleDot size={13} />源表：{result.table.name} · Header {result.headerRows.map((row) => row + 1).join(", ")}</div>
                 </div>
-                {activeTab === "bom" && <BomTable lines={filteredLines} selectedLineId={selectedLine?.lineId} onSelect={(line) => setSelectedLineId(line.lineId)} enrichments={enrichments} />}
+                {activeTab === "bom" && <BomTable lines={filteredLines} selectedLineId={selectedLine?.lineId} onSelect={(line) => setSelectedLineId(line.lineId)} enrichments={enrichments} reviewedLineIds={reviewedLineIds} />}
                 {activeTab === "mapping" && <MappingTable result={result} />}
                 {activeTab === "evidence" && <EvidenceView line={selectedLine} />}
                 {activeTab === "reviews" && <ReviewsView result={result} resolvedIds={resolvedReviewIds} onResolve={(id) => setResolvedReviewIds((current) => new Set([...current, id]))} onSelectLine={(lineId) => { if (lineId) setSelectedLineId(lineId); }} />}
@@ -508,7 +522,7 @@ export function BomWorkspace() {
             </div>
           )}
         </main>
-        {status === "ready" && <Inspector key={selectedLine?.lineId ?? "empty"} line={selectedLine} patches={patches} onPatch={(patch) => setPatches((current) => [...current, patch])} enrichments={selectedLine ? enrichments.get(selectedLine.lineId) : undefined} />}
+        {status === "ready" && <Inspector key={selectedLine?.lineId ?? "empty"} line={selectedLine} patches={patches} onPatch={(patch) => setPatches((current) => [...current, patch])} enrichments={selectedLine ? enrichments.get(selectedLine.lineId) : undefined} onMarkReviewed={(lineId) => setReviewedLineIds((current) => new Set([...current, lineId]))} />}
       </div>
     </div>
   );
