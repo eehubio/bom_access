@@ -408,7 +408,6 @@ export function BomWorkspace() {
   const enrichFromDistributors = async () => {
     const lines = resolvedLines
       .filter((line) => line.lineType === "component" && (line.part.manufacturerPartNumber?.normalized || /^(R|C)\d+/i.test(line.referenceDesignators.normalized[0] ?? "")))
-      .slice(0, 25)
       .map((line) => ({
         lineId: line.lineId,
         manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized,
@@ -422,19 +421,24 @@ export function BomWorkspace() {
     setIsEnriching(true);
     setEnrichmentStatus("");
     try {
-      const response = await fetch("/api/v1/bom-normalization/enrich/digikey", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lines }),
-      });
-      const payload = await response.json() as DigiKeyEnrichmentResponse & { error?: string };
-      if (!response.ok) throw new Error(payload.message ?? payload.error ?? "DIGIKEY_ENRICHMENT_FAILED");
-      if (!payload.configured) {
-        setEnrichmentStatus(payload.message ?? "分销商 API 尚未配置。");
+      const batches = Array.from({ length: Math.ceil(lines.length / 25) }, (_, index) => lines.slice(index * 25, (index + 1) * 25));
+      const payloads = await Promise.all(batches.map(async (batch) => {
+        const response = await fetch("/api/v1/bom-normalization/enrich/digikey", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lines: batch }),
+        });
+        const payload = await response.json() as DigiKeyEnrichmentResponse & { error?: string };
+        if (!response.ok) throw new Error(payload.message ?? payload.error ?? "DISTRIBUTOR_ENRICHMENT_FAILED");
+        return payload;
+      }));
+      if (payloads.some((payload) => !payload.configured)) {
+        setEnrichmentStatus(payloads.find((payload) => !payload.configured)?.message ?? "分销商 API 尚未配置。");
         return;
       }
-      setEnrichments(new Map(payload.matches.map((match) => [match.lineId, match])));
-      setEnrichmentStatus(`分销商已返回 ${payload.matches.length} 个候选（含无料号 R/C）；结果为外部候选，不会覆盖原始字段。`);
+      const matches = payloads.flatMap((payload) => payload.matches);
+      setEnrichments(new Map(matches.map((match) => [match.lineId, match])));
+      setEnrichmentStatus(`分销商已返回 ${matches.length} 个候选（${lines.length} 行，分 ${batches.length} 批）；结果为外部候选，不会覆盖原始字段。`);
     } catch (caught) {
       setEnrichmentStatus(caught instanceof Error ? `分销商查询失败：${caught.message}` : "分销商查询失败，请稍后重试。");
     } finally {
