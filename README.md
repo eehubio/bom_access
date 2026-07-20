@@ -54,6 +54,10 @@ DIGIKEY_LOCALE_CURRENCY=USD
 
 保存后重新部署。不要把 `Client Secret` 放入 GitHub、浏览器代码或 `NEXT_PUBLIC_*` 变量。应用使用 DigiKey OAuth 2-legged `client_credentials` 流程，在服务端获取短期令牌；点击页面的“DigiKey 补全”只会提交 BOM 中含有制造商料号的行，单次最多 25 条。`.env.example` 提供本地变量模板。
 
+### 配置 ezPLM API
+
+在 Vercel 的 **Settings → Environment Variables** 添加 `EZPLM_API_KEY`。该值仅用于服务端按 ezPLM 的 HMAC-SHA256 规则签名请求，绝不能使用 `NEXT_PUBLIC_` 前缀或提交到 Git。查询优先级为：非 R/C 器件先查 ezPLM，未命中再查 DigiKey 和 Mouser；R/C 无源器件直接查 DigiKey/Mouser。
+
 也可使用 Vercel CLI：
 
 ```bash

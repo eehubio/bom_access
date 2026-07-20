@@ -3,6 +3,7 @@ export interface DigiKeyEnrichmentRequestLine {
   manufacturerPartNumber?: string;
   searchQuery?: string;
   footprint?: string | null;
+  isPassive?: boolean;
 }
 
 export interface DigiKeyEnrichmentMatch {
@@ -16,7 +17,7 @@ export interface DigiKeyEnrichmentMatch {
   productUrl: string | null;
   confidence: number;
   matchType: "exact_mpn" | "candidate";
-  source: "digikey_product_search_v4" | "mouser_search_v1";
+  source: "ezplm_parts_api" | "digikey_product_search_v4" | "mouser_search_v1";
 }
 
 export interface DigiKeyEnrichmentResponse {

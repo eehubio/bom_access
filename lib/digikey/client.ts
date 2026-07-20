@@ -3,6 +3,7 @@ import type {
   DigiKeyEnrichmentRequestLine,
   DigiKeyEnrichmentResponse,
 } from "./types";
+import { isEzplmConfigured, lookupEzplm } from "@/lib/ezplm/client";
 
 type DigiKeyProduct = {
   ManufacturerProductNumber?: unknown;
@@ -187,12 +188,15 @@ export async function enrichWithDigiKey(
 export async function enrichWithDistributors(lines: DigiKeyEnrichmentRequestLine[]): Promise<DigiKeyEnrichmentResponse> {
   const digiKeyConfigured = Boolean(config());
   const mouserConfigured = Boolean(mouserConfig());
-  if (!digiKeyConfigured && !mouserConfigured) {
-    return { configured: false, matches: [], unmatchedLineIds: lines.map((line) => line.lineId), message: "请配置 DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET 或 MOUSER_API_KEY。" };
+  const ezplmConfigured = isEzplmConfigured();
+  if (!ezplmConfigured && !digiKeyConfigured && !mouserConfigured) {
+    return { configured: false, matches: [], unmatchedLineIds: lines.map((line) => line.lineId), message: "请配置 EZPLM_API_KEY、DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET 或 MOUSER_API_KEY。" };
   }
   const matches: DigiKeyEnrichmentMatch[] = [];
   const unmatchedLineIds: string[] = [];
   for (const line of lines) {
+    const ezplmMatch = ezplmConfigured ? await lookupEzplm(line) : null;
+    if (ezplmMatch) { matches.push(ezplmMatch); continue; }
     const results = await Promise.allSettled([
       digiKeyConfigured ? lookup(line, config()!) : Promise.resolve(null),
       mouserConfigured ? lookupMouser(line) : Promise.resolve(null),

@@ -328,7 +328,7 @@ function Inspector({
             <strong>{line.referenceDesignators.normalized.join(", ") || line.lineType}</strong>
             <small>Machine record 保持不可变</small>
           </div>
-          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />分销商候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {Math.round(enrichment.confidence * 100)}% · {enrichment.matchType === "exact_mpn" ? "精确匹配" : "规格候选"}</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); }}>采用</button></div>)}</div> : null}
+          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />查询候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "ezplm_parts_api" ? "ezPLM" : enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {Math.round(enrichment.confidence * 100)}% · {enrichment.matchType === "exact_mpn" ? "精确匹配" : "规格候选"}</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); }}>采用</button></div>)}</div> : null}
           <div className="edit-section">
             <label>制造商料号 <em>{confidenceLabel(line.confidence.manufacturer_part_number)}</em></label>
             <input value={mpn} onChange={(event) => setMpn(event.target.value)} />
@@ -414,6 +414,7 @@ export function BomWorkspace() {
         manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized,
         searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(line.referenceDesignators.normalized[0] ?? "") ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized?.match(/(?:_|^)(\d{4})(?:_|\s|$)/)?.[1] ?? ""}`,
         footprint: line.engineering.footprint?.normalized ?? null,
+        isPassive: /^(R|C)\d+/i.test(line.referenceDesignators.normalized[0] ?? ""),
       }));
     if (!lines.length) {
       setEnrichmentStatus("没有可查询的制造商料号；请先补充型号后再查询。");
