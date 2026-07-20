@@ -79,6 +79,12 @@ function confidenceLabel(score?: number): string {
   return `${Math.round(score * 100)}%`;
 }
 
+function enrichmentSourceLabel(enrichment?: DigiKeyEnrichmentMatch): string {
+  if (!enrichment) return "";
+  if (enrichment.source === "ezplm_parts_api") return "ezPLM 匹配";
+  return enrichment.source === "mouser_search_v1" ? "Mouser 候选" : "DigiKey 候选";
+}
+
 function LoadingView({ progress }: { progress: ParseProgress }) {
   return (
     <div className="loading-view">
@@ -176,14 +182,14 @@ function BomTable({
               <td className="qty-col">{line.quantity.perAssembly ?? "AR"}</td>
               <td>
                 {line.part.manufacturer?.normalized || enrichment?.manufacturer || "—"}
-                {!line.part.manufacturer?.normalized && enrichment?.manufacturer && <small>分销商 {Math.round(enrichment.confidence * 100)}%</small>}
+                {!line.part.manufacturer?.normalized && enrichment?.manufacturer && <small className={enrichment.source === "ezplm_parts_api" ? "source-ezplm" : ""}>{enrichmentSourceLabel(enrichment)} {Math.round(enrichment.confidence * 100)}%</small>}
               </td>
               <td>
                 <strong className="cell-primary mono">
                   {line.part.manufacturerPartNumber?.normalized || enrichment?.matchedManufacturerPartNumber || line.part.internalPartNumber?.normalized || "—"}
                 </strong>
                 {!line.part.manufacturerPartNumber?.normalized && enrichment?.matchedManufacturerPartNumber && (
-                  <small>{enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} 候选 · 待审核</small>
+                  <small className={enrichment.source === "ezplm_parts_api" ? "source-ezplm" : ""}>{enrichmentSourceLabel(enrichment)} · 待审核</small>
                 )}
                 {line.part.manufacturerPartNumber && line.part.internalPartNumber && (
                   <small>{line.part.internalPartNumber.normalized}</small>

@@ -1299,6 +1299,8 @@ button {
 .candidate-line strong, .candidate-line small { display: block; font-size: 11px; }
 .candidate-line small { color: #52706c; margin-top: 3px; }
 
+.source-ezplm { color: #147d6e !important; font-weight: 700; }
+
 .source-context span {
   color: var(--ink-faint);
   font-size: 8px;
