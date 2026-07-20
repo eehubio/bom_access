@@ -201,10 +201,11 @@ function inferManufacturerFromMpn(mpn: string): string | null {
   const rules: Array<[RegExp, string]> = [
     [/^MIC\d/, "Microchip Technology"],
     [/^CH34/, "WCH"],
-    [/^(?:LM|TPS)\d/, "Texas Instruments"],
+    [/^(?:LM|LMV|TPS)\d/, "Texas Instruments"],
     [/^ADA\d/, "Analog Devices"],
     [/^MACHXO/, "Lattice Semiconductor"],
     [/^LPC\d/, "NXP Semiconductors"],
+    [/^(?:STM32|USBLC)\w+/, "STMicroelectronics"],
   ];
   return rules.find(([pattern]) => pattern.test(normalized))?.[1] ?? null;
 }

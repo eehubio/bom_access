@@ -116,6 +116,22 @@ describe("normalizeDocument", () => {
     expect(result.lines[2].evidence.manufacturer?.mappingRule).toBe("inference:manufacturer_from_mpn_prefix");
   });
 
+  it("infers manufacturers for common TI and STMicroelectronics part-number families", () => {
+    const result = normalizeDocument(
+      fixture([
+        ["位号", "数量", "型号"],
+        ["U1", "1", "LMV358"],
+        ["U2", "1", "STM32F103_DAP48"],
+        ["U3", "1", "USBLC6-2SC6"],
+      ]),
+    );
+    expect(result.lines.map((line) => line.part.manufacturer?.normalized)).toEqual([
+      "Texas Instruments",
+      "STMicroelectronics",
+      "STMicroelectronics",
+    ]);
+  });
+
   it("keeps machine record immutable when applying a patch", () => {
     const result = normalizeDocument(
       fixture([

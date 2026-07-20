@@ -50,6 +50,10 @@ export async function parseFile(
   onProgress?.({ stage: "SECURITY_SCANNING", progress: 5, detail: "校验文件头、大小与压缩比" });
   const buffer = await file.arrayBuffer();
   const warnings = validateSource(file, sourceType, buffer);
+  const prefix = new TextDecoder("utf-8", { fatal: false }).decode(buffer.slice(0, 1024));
+  if (["xlsx", "xlsm", "xls", "xlsb"].includes(sourceType) && /<html[\s>]|github\.com|sign in to github/i.test(prefix)) {
+    throw new Error("SPREADSHEET_FILE_IS_HTML: 下载到的是网页而非 Excel 原文件，请从原始链接重新下载后再上传。");
+  }
   const digest = await sha256(buffer);
   const asset: SourceAsset = {
     assetId: createId("asset"),
