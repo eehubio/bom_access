@@ -81,6 +81,11 @@ function config() {
   };
 }
 
+function mouserConfig() {
+  const apiKey = process.env.MOUSER_API_KEY;
+  return apiKey ? { apiKey } : null;
+}
+
 async function accessToken(settings: NonNullable<ReturnType<typeof config>>): Promise<string> {
   if (tokenCache && tokenCache.expiresAt > Date.now()) return tokenCache.accessToken;
   const body = new URLSearchParams({
@@ -127,6 +132,36 @@ async function lookup(
   return selectDigiKeyMatch(line, await response.json());
 }
 
+async function lookupMouser(line: DigiKeyEnrichmentRequestLine): Promise<DigiKeyEnrichmentMatch | null> {
+  const settings = mouserConfig();
+  if (!settings) return null;
+  const response = await fetch(`https://api.mouser.com/api/v1/search/keyword?apiKey=${encodeURIComponent(settings.apiKey)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ SearchByKeywordRequest: { keyword: line.manufacturerPartNumber, records: 5, startingRecord: 0, searchOptions: "None" } }),
+    cache: "no-store",
+  });
+  if (!response.ok) return null;
+  const payload = await response.json() as { SearchResults?: { Parts?: Array<Record<string, unknown>> } };
+  const parts = payload.SearchResults?.Parts ?? [];
+  const part = parts.find((candidate) => comparable(clean(candidate.ManufacturerPartNumber) ?? "") === comparable(line.manufacturerPartNumber)) ?? parts[0];
+  const matchedManufacturerPartNumber = clean(part?.ManufacturerPartNumber);
+  if (!part || !matchedManufacturerPartNumber) return null;
+  return {
+    lineId: line.lineId,
+    queriedManufacturerPartNumber: line.manufacturerPartNumber,
+    matchedManufacturerPartNumber,
+    manufacturer: clean(part.Manufacturer),
+    package: clean(part.PackageType),
+    description: clean(part.Description),
+    digiKeyProductNumber: clean(part.MouserPartNumber),
+    productUrl: clean(part.ProductDetailUrl),
+    confidence: comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? 0.99 : 0.72,
+    matchType: comparable(matchedManufacturerPartNumber) === comparable(line.manufacturerPartNumber) ? "exact_mpn" : "candidate",
+    source: "mouser_search_v1",
+  };
+}
+
 export async function enrichWithDigiKey(
   lines: DigiKeyEnrichmentRequestLine[],
 ): Promise<DigiKeyEnrichmentResponse> {
@@ -144,6 +179,26 @@ export async function enrichWithDigiKey(
   for (const line of lines) {
     const match = await lookup(line, settings);
     if (match) matches.push(match);
+    else unmatchedLineIds.push(line.lineId);
+  }
+  return { configured: true, matches, unmatchedLineIds };
+}
+
+export async function enrichWithDistributors(lines: DigiKeyEnrichmentRequestLine[]): Promise<DigiKeyEnrichmentResponse> {
+  const digiKeyConfigured = Boolean(config());
+  const mouserConfigured = Boolean(mouserConfig());
+  if (!digiKeyConfigured && !mouserConfigured) {
+    return { configured: false, matches: [], unmatchedLineIds: lines.map((line) => line.lineId), message: "请配置 DIGIKEY_CLIENT_ID/DIGIKEY_CLIENT_SECRET 或 MOUSER_API_KEY。" };
+  }
+  const matches: DigiKeyEnrichmentMatch[] = [];
+  const unmatchedLineIds: string[] = [];
+  for (const line of lines) {
+    const results = await Promise.allSettled([
+      digiKeyConfigured ? lookup(line, config()!) : Promise.resolve(null),
+      mouserConfigured ? lookupMouser(line) : Promise.resolve(null),
+    ]);
+    const lineMatches = results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
+    if (lineMatches.length) matches.push(...lineMatches);
     else unmatchedLineIds.push(line.lineId);
   }
   return { configured: true, matches, unmatchedLineIds };

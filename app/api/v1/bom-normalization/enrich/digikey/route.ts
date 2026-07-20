@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { enrichWithDigiKey } from "@/lib/digikey/client";
+import { enrichWithDistributors } from "@/lib/digikey/client";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,7 +16,7 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const { lines } = requestSchema.parse(await request.json());
-    return NextResponse.json(await enrichWithDigiKey(lines));
+    return NextResponse.json(await enrichWithDistributors(lines));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "INVALID_REQUEST", details: error.issues }, { status: 400 });

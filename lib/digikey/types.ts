@@ -15,7 +15,7 @@ export interface DigiKeyEnrichmentMatch {
   productUrl: string | null;
   confidence: number;
   matchType: "exact_mpn" | "candidate";
-  source: "digikey_product_search_v4";
+  source: "digikey_product_search_v4" | "mouser_search_v1";
 }
 
 export interface DigiKeyEnrichmentResponse {
