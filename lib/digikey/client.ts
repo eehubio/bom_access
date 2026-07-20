@@ -13,6 +13,7 @@ type DigiKeyProduct = {
   ProductUrl?: unknown;
   Parameters?: Array<{ Parameter?: unknown; ValueText?: unknown; Value?: unknown }>;
   StandardPricing?: Array<{ BreakQuantity?: unknown; UnitPrice?: unknown }>;
+  ProductVariations?: Array<{ StandardPricing?: Array<{ BreakQuantity?: unknown; UnitPrice?: unknown }> }>;
 };
 
 type TokenCache = { accessToken: string; expiresAt: number };
@@ -37,6 +38,14 @@ function packageFromParameters(product: DigiKeyProduct): string | null {
 
 function priceAtQuantity(breaks: DigiKeyProduct["StandardPricing"], quantity = 1): number | null {
   return (breaks ?? []).map((item) => ({ quantity: Number(item.BreakQuantity), price: Number(item.UnitPrice) })).filter((item) => Number.isFinite(item.quantity) && Number.isFinite(item.price) && item.quantity <= quantity).sort((left, right) => right.quantity - left.quantity)[0]?.price ?? null;
+}
+
+function digiKeyPrice(product: DigiKeyProduct, quantity?: number): number | null {
+  const prices = [
+    priceAtQuantity(product.StandardPricing, quantity),
+    ...(product.ProductVariations ?? []).map((variation) => priceAtQuantity(variation.StandardPricing, quantity)),
+  ].filter((price): price is number => price !== null);
+  return prices.length ? Math.min(...prices) : null;
 }
 
 export function selectDigiKeyMatch(
@@ -66,7 +75,7 @@ export function selectDigiKeyMatch(
     description: clean(product.Description?.DetailedDescription) ?? clean(product.Description?.ProductDescription),
     digiKeyProductNumber: clean(product.DigiKeyProductNumber),
     productUrl: clean(product.ProductUrl),
-    unitPrice: priceAtQuantity(product.StandardPricing, line.requestedQuantity),
+    unitPrice: digiKeyPrice(product, line.requestedQuantity),
     currency: "USD",
     confidence: exact ? 0.99 : 0.72,
     matchType: exact ? "exact_mpn" : "candidate",

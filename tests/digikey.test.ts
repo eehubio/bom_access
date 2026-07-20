@@ -17,6 +17,9 @@ describe("selectDigiKeyMatch", () => {
               { Parameter: "Package / Case", ValueText: "8-WFDFN Exposed Pad" },
               { Parameter: "Mounting Type", ValueText: "Surface Mount" },
             ],
+            ProductVariations: [
+              { StandardPricing: [{ BreakQuantity: 1, UnitPrice: 2.32 }, { BreakQuantity: 10, UnitPrice: 1.719 }] },
+            ],
           },
         ],
       },
@@ -27,6 +30,7 @@ describe("selectDigiKeyMatch", () => {
       package: "8-WFDFN Exposed Pad",
       matchType: "exact_mpn",
       confidence: 0.99,
+      unitPrice: 2.32,
     });
   });
 
