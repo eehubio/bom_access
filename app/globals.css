@@ -1293,6 +1293,12 @@ button {
   margin-top: 10px;
 }
 
+.candidate-section { border-top: 1px solid #e5ebf2; margin-top: 14px; padding-top: 14px; }
+.candidate-section h4 { align-items: center; display: flex; font-size: 12px; gap: 6px; margin: 0 0 8px; }
+.candidate-line { align-items: center; background: #effaf8; border: 1px solid #c5ebe5; border-radius: 8px; display: flex; justify-content: space-between; margin-top: 7px; padding: 8px; }
+.candidate-line strong, .candidate-line small { display: block; font-size: 11px; }
+.candidate-line small { color: #52706c; margin-top: 3px; }
+
 .source-context span {
   color: var(--ink-faint);
   font-size: 8px;

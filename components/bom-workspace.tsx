@@ -142,7 +142,7 @@ function BomTable({
   lines: CanonicalBomLine[];
   selectedLineId?: string;
   onSelect: (line: CanonicalBomLine) => void;
-  enrichments: Map<string, DigiKeyEnrichmentMatch>;
+  enrichments: Map<string, DigiKeyEnrichmentMatch[]>;
 }) {
   return (
     <div className="data-table-wrap">
@@ -162,7 +162,7 @@ function BomTable({
         </thead>
         <tbody>
           {lines.map((line, index) => {
-            const enrichment = enrichments.get(line.lineId);
+            const enrichment = enrichments.get(line.lineId)?.[0];
             return <tr
               key={line.lineId}
               className={`${selectedLineId === line.lineId ? "selected" : ""} ${line.lineType !== "component" ? "non-component" : ""}`}
@@ -291,14 +291,15 @@ function Inspector({
   line,
   patches,
   onPatch,
-  enrichment,
+  enrichments,
 }: {
   line?: CanonicalBomLine;
   patches: ReviewPatch[];
   onPatch: (patch: ReviewPatch) => void;
-  enrichment?: DigiKeyEnrichmentMatch;
+  enrichments?: DigiKeyEnrichmentMatch[];
 }) {
-  const [mpn, setMpn] = useState(line?.part.manufacturerPartNumber?.normalized ?? "");
+  const primaryEnrichment = enrichments?.[0];
+  const [mpn, setMpn] = useState(line?.part.manufacturerPartNumber?.normalized ?? primaryEnrichment?.matchedManufacturerPartNumber ?? "");
   const [qty, setQty] = useState(line?.quantity.perAssembly ?? "");
   const [packageValue, setPackageValue] = useState(line?.engineering.package?.normalized ?? "");
 
@@ -327,7 +328,7 @@ function Inspector({
             <strong>{line.referenceDesignators.normalized.join(", ") || line.lineType}</strong>
             <small>Machine record 保持不可变</small>
           </div>
-          {enrichment && <div className="source-context enrichment-context"><span>{enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} 分销商结果 · {Math.round(enrichment.confidence * 100)}%</span><strong>{enrichment.manufacturer ?? "未返回厂商"}</strong><small>{enrichment.matchType === "exact_mpn" ? "制造商料号精确匹配" : "候选匹配，建议复核"}{enrichment.package ? ` · 封装候选：${enrichment.package}` : ""}</small></div>}
+          {enrichments?.length ? <div className="candidate-section"><h4><Sparkles size={15} />分销商候选</h4>{enrichments.map((enrichment) => <div className="candidate-line" key={`${enrichment.source}-${enrichment.matchedManufacturerPartNumber}`}><div><strong>{enrichment.manufacturer ?? "未返回厂商"} · {enrichment.matchedManufacturerPartNumber}</strong><small>{enrichment.source === "mouser_search_v1" ? "Mouser" : "DigiKey"} · {Math.round(enrichment.confidence * 100)}% · {enrichment.matchType === "exact_mpn" ? "精确匹配" : "规格候选"}</small></div><button className="text-button" onClick={() => { createPatch("/part/manufacturerPartNumber/normalized", line.part.manufacturerPartNumber?.normalized ?? "", enrichment.matchedManufacturerPartNumber, "distributor_candidate_approved"); createPatch("/part/manufacturer/normalized", line.part.manufacturer?.normalized ?? "", enrichment.manufacturer ?? "", "distributor_candidate_approved"); }}>采用</button></div>)}</div> : null}
           <div className="edit-section">
             <label>制造商料号 <em>{confidenceLabel(line.confidence.manufacturer_part_number)}</em></label>
             <input value={mpn} onChange={(event) => setMpn(event.target.value)} />
@@ -357,7 +358,7 @@ export function BomWorkspace() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [showExport, setShowExport] = useState(false);
-  const [enrichments, setEnrichments] = useState<Map<string, DigiKeyEnrichmentMatch>>(new Map());
+  const [enrichments, setEnrichments] = useState<Map<string, DigiKeyEnrichmentMatch[]>>(new Map());
   const [enrichmentStatus, setEnrichmentStatus] = useState("");
   const [isEnriching, setIsEnriching] = useState(false);
 
@@ -438,7 +439,9 @@ export function BomWorkspace() {
         return;
       }
       const matches = payloads.flatMap((payload) => payload.matches);
-      setEnrichments(new Map(matches.map((match) => [match.lineId, match])));
+      const grouped = new Map<string, DigiKeyEnrichmentMatch[]>();
+      matches.forEach((match) => grouped.set(match.lineId, [...(grouped.get(match.lineId) ?? []), match]));
+      setEnrichments(grouped);
       setEnrichmentStatus(`分销商已返回 ${matches.length} 个候选（${lines.length} 行，分 ${batches.length} 批）；结果为外部候选，不会覆盖原始字段。`);
     } catch (caught) {
       setEnrichmentStatus(caught instanceof Error ? `分销商查询失败：${caught.message}` : "分销商查询失败，请稍后重试。");
@@ -498,7 +501,7 @@ export function BomWorkspace() {
             </div>
           )}
         </main>
-        {status === "ready" && <Inspector key={selectedLine?.lineId ?? "empty"} line={selectedLine} patches={patches} onPatch={(patch) => setPatches((current) => [...current, patch])} enrichment={selectedLine ? enrichments.get(selectedLine.lineId) : undefined} />}
+        {status === "ready" && <Inspector key={selectedLine?.lineId ?? "empty"} line={selectedLine} patches={patches} onPatch={(patch) => setPatches((current) => [...current, patch])} enrichments={selectedLine ? enrichments.get(selectedLine.lineId) : undefined} />}
       </div>
     </div>
   );
