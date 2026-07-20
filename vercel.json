@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "functions": {
+    "app/api/v1/bom-normalization/jobs/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

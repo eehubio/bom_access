@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ezplm.example/schemas/canonical-bom-1.0.0.json",
+  "title": "Canonical BOM",
+  "type": "object",
+  "required": ["agentId", "agentVersion", "jobId", "resultId", "status", "source", "lines", "quality"],
+  "properties": {
+    "agentId": { "const": "bom-intake-normalization" },
+    "agentVersion": { "type": "string" },
+    "jobId": { "type": "string" },
+    "resultId": { "type": "string" },
+    "status": { "enum": ["completed", "review_required"] },
+    "source": {
+      "type": "object",
+      "required": ["assetId", "filename", "sha256", "sourceType"],
+      "properties": {
+        "assetId": { "type": "string" },
+        "filename": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sourceType": { "enum": ["xlsx", "xlsm", "xls", "xlsb", "csv", "tsv", "text", "markdown", "html", "pdf", "image"] }
+      }
+    },
+    "lines": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/line" }
+    },
+    "quality": {
+      "type": "object",
+      "required": ["overallScore", "reviewRequired", "reviewReasons"],
+      "properties": {
+        "overallScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reviewRequired": { "type": "boolean" },
+        "reviewReasons": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "normalizedText": {
+      "type": ["object", "null"],
+      "properties": {
+        "raw": { "type": "string" },
+        "normalized": { "type": "string" }
+      },
+      "required": ["raw", "normalized"]
+    },
+    "line": {
+      "type": "object",
+      "required": ["lineId", "lineType", "hierarchy", "referenceDesignators", "quantity", "part", "engineering", "assembly", "rawFields", "evidence", "reviewStatus"],
+      "properties": {
+        "lineId": { "type": "string" },
+        "lineType": { "enum": ["component", "subassembly", "mechanical", "pcb", "firmware", "consumable", "packaging", "document", "labor", "service", "group_header", "note", "subtotal", "separator", "unknown"] },
+        "hierarchy": {
+          "type": "object",
+          "required": ["level", "parentLineId", "isPhantom"],
+          "properties": {
+            "level": { "type": "integer", "minimum": 0 },
+            "parentLineId": { "type": ["string", "null"] },
+            "isPhantom": { "type": "boolean" }
+          }
+        },
+        "referenceDesignators": {
+          "type": "object",
+          "required": ["raw", "normalized", "physicalCount", "logicalUnits"],
+          "properties": {
+            "raw": { "type": "string" },
+            "normalized": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            "physicalCount": { "type": "integer", "minimum": 0 },
+            "logicalUnits": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+          }
+        },
+        "quantity": {
+          "type": "object",
+          "required": ["raw", "perAssembly", "unit", "source"],
+          "properties": {
+            "raw": { "type": "string" },
+            "perAssembly": { "type": ["string", "null"] },
+            "unit": { "type": "string" },
+            "source": { "enum": ["explicit", "inferred_from_refdes", "unknown"] }
+          }
+        },
+        "part": { "type": "object" },
+        "engineering": { "type": "object" },
+        "assembly": { "type": "object" },
+        "rawFields": { "type": "object", "additionalProperties": true },
+        "evidence": { "type": "object", "additionalProperties": true },
+        "reviewStatus": { "enum": ["auto_approved", "review_required"] }
+      }
+    }
+  }
+}
