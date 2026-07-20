@@ -26,7 +26,7 @@ import {
   Upload,
   WandSparkles,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { normalizeDocument } from "@/lib/bom/normalize";
 import { parseFile, parseText } from "@/lib/bom/parsers";
 import { applyReviewPatches } from "@/lib/bom/patches";
@@ -35,10 +35,12 @@ import type {
   CanonicalBomLine,
   NormalizationResult,
   ParseProgress,
+  RawDocument,
   ReviewPatch,
 } from "@/lib/bom/types";
 import type { DigiKeyEnrichmentMatch, DigiKeyEnrichmentResponse } from "@/lib/digikey/types";
 import { createId } from "@/lib/bom/utils";
+import { listStoredBomTasks, saveStoredBomTask, type StoredBomTask } from "@/lib/bom/task-store";
 import { UploadZone } from "./upload-zone";
 
 const DEMO_BOM = `序号\t位号\t数量\t厂商\t型号\t描述\t封装\tDNP\t采购备注
@@ -52,11 +54,23 @@ const DEMO_BOM = `序号\t位号\t数量\t厂商\t型号\t描述\t封装\tDNP\t�
 type MainTab = "bom" | "mapping" | "evidence" | "reviews";
 type WorkspaceSection = "bom" | "history" | "rules";
 type AppStatus = "idle" | "processing" | "ready" | "error";
-type HistoryTask = {
-  taskId: string;
-  createdAt: string;
-  result: NormalizationResult;
-};
+type HistoryTask = StoredBomTask;
+
+function enrichmentKey(line: CanonicalBomLine): string {
+  const reference = line.referenceDesignators.normalized[0] ?? "";
+  const isPassive = /^(R|C)\d+/i.test(reference);
+  const packageCode = line.engineering.package?.normalized?.match(/(?:_|^)(\d{4})(?:_|\s|$)/)?.[1] ?? "";
+  const searchQuery = line.part.manufacturerPartNumber?.normalized
+    ? ""
+    : `${/^R/i.test(reference) ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${packageCode}`;
+  return JSON.stringify({
+    manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized ?? "",
+    searchQuery,
+    footprint: line.engineering.footprint?.normalized ?? "",
+    isPassive,
+    quantity: line.quantity.perAssembly ?? "",
+  });
+}
 
 const PIPELINE = [
   ["SECURITY_SCANNING", "安全扫描"],
@@ -393,6 +407,11 @@ export function BomWorkspace() {
   const [progress, setProgress] = useState<ParseProgress>({ stage: "RECEIVED", progress: 0, detail: "准备接收文件" });
   const [result, setResult] = useState<NormalizationResult>();
   const [historyTasks, setHistoryTasks] = useState<HistoryTask[]>([]);
+  const [activeTaskId, setActiveTaskId] = useState<string>();
+  const [activeTaskCreatedAt, setActiveTaskCreatedAt] = useState<string>();
+  const [rawDocument, setRawDocument] = useState<RawDocument>();
+  const [sourceFile, setSourceFile] = useState<Blob>();
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState<MainTab>("bom");
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("bom");
   const [selectedLineId, setSelectedLineId] = useState<string>();
@@ -403,6 +422,7 @@ export function BomWorkspace() {
   const [search, setSearch] = useState("");
   const [showExport, setShowExport] = useState(false);
   const [enrichments, setEnrichments] = useState<Map<string, DigiKeyEnrichmentMatch[]>>(new Map());
+  const [enrichmentKeys, setEnrichmentKeys] = useState<Map<string, string>>(new Map());
   const [enrichmentStatus, setEnrichmentStatus] = useState("");
   const [isEnriching, setIsEnriching] = useState(false);
 
@@ -422,13 +442,40 @@ export function BomWorkspace() {
     return sum + (Number.isFinite(price) ? price : 0) * Number(line.quantity.perAssembly ?? 0);
   }, 0);
 
-  const runNormalization = async (loader: () => ReturnType<typeof parseText>) => {
+  useEffect(() => {
+    void listStoredBomTasks().then((tasks) => {
+      setHistoryTasks(tasks);
+      setHistoryLoaded(true);
+    }).catch(() => setHistoryLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (!historyLoaded || !activeTaskId || !result || !rawDocument || !sourceFile) return;
+    const task: HistoryTask = {
+      taskId: activeTaskId,
+      createdAt: activeTaskCreatedAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sourceFile,
+      rawDocument,
+      result,
+      patches,
+      enrichments: Array.from(enrichments.entries()),
+      enrichmentKeys: Array.from(enrichmentKeys.entries()),
+      reviewedLineIds: Array.from(reviewedLineIds),
+      resolvedReviewIds: Array.from(resolvedReviewIds),
+    };
+    setHistoryTasks((current) => [task, ...current.filter((item) => item.taskId !== task.taskId)]);
+    void saveStoredBomTask(task);
+  }, [activeTaskCreatedAt, activeTaskId, enrichments, enrichmentKeys, historyLoaded, patches, rawDocument, resolvedReviewIds, result, reviewedLineIds, sourceFile]);
+
+  const runNormalization = async (loader: () => ReturnType<typeof parseText>, originalFile: Blob) => {
     setStatus("processing");
     setError("");
     setPatches([]);
     setResolvedReviewIds(new Set());
     setReviewedLineIds(new Set());
     setEnrichments(new Map());
+    setEnrichmentKeys(new Map());
     setEnrichmentStatus("");
     try {
       const document = await loader();
@@ -437,7 +484,10 @@ export function BomWorkspace() {
       const normalized = normalizeDocument(document);
       setProgress({ stage: "QUALITY_EVALUATING", progress: 96, detail: "正在检查数量、位号和冲突" });
       setResult(normalized);
-      setHistoryTasks((current) => [{ taskId: createId("task"), createdAt: new Date().toISOString(), result: normalized }, ...current.filter((task) => task.result.source.sha256 !== normalized.source.sha256)].slice(0, 20));
+      setActiveTaskId(createId("task"));
+      setActiveTaskCreatedAt(new Date().toISOString());
+      setRawDocument(document);
+      setSourceFile(originalFile);
       setSelectedLineId(normalized.lines[0]?.lineId);
       setStatus("ready");
     } catch (caught) {
@@ -446,33 +496,47 @@ export function BomWorkspace() {
     }
   };
 
-  const handleFile = (file: File) => runNormalization(() => parseFile(file, setProgress));
-  const handleText = (text: string) => runNormalization(() => parseText(text));
+  const handleFile = (file: File) => runNormalization(() => parseFile(file, setProgress), file);
+  const handleText = (text: string) => runNormalization(() => parseText(text), new Blob([text], { type: "text/plain" }));
   const reset = () => {
     setStatus("idle");
     setResult(undefined);
     setPatches([]);
     setReviewedLineIds(new Set());
     setEnrichments(new Map());
+    setEnrichmentKeys(new Map());
     setEnrichmentStatus("");
     setError("");
   };
 
   const enrichFromDistributors = async () => {
-    const lines = resolvedLines
+    const queryableLines = resolvedLines
       .filter((line) => line.lineType === "component" && (line.part.manufacturerPartNumber?.normalized || /^(R|C)\d+/i.test(line.referenceDesignators.normalized[0] ?? "")))
-      .map((line) => ({
-        lineId: line.lineId,
-        manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized,
-        searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(line.referenceDesignators.normalized[0] ?? "") ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized?.match(/(?:_|^)(\d{4})(?:_|\s|$)/)?.[1] ?? ""}`,
-        footprint: line.engineering.footprint?.normalized ?? null,
-        isPassive: /^(R|C)\d+/i.test(line.referenceDesignators.normalized[0] ?? ""),
-        requestedQuantity: Number(line.quantity.perAssembly ?? 1),
-      }));
-    if (!lines.length) {
+      .map((line) => {
+        const reference = line.referenceDesignators.normalized[0] ?? "";
+        return {
+          line,
+          key: enrichmentKey(line),
+          request: {
+            lineId: line.lineId,
+            manufacturerPartNumber: line.part.manufacturerPartNumber?.normalized,
+            searchQuery: line.part.manufacturerPartNumber?.normalized ? undefined : `${/^R/i.test(reference) ? "resistor" : "capacitor"} ${line.engineering.value?.normalized ?? ""} ${line.engineering.package?.normalized?.match(/(?:_|^)(\d{4})(?:_|\s|$)/)?.[1] ?? ""}`,
+            footprint: line.engineering.footprint?.normalized ?? null,
+            isPassive: /^(R|C)\d+/i.test(reference),
+            requestedQuantity: Number(line.quantity.perAssembly ?? 1),
+          },
+        };
+      });
+    if (!queryableLines.length) {
       setEnrichmentStatus("没有可查询的制造商料号；请先补充型号后再查询。");
       return;
     }
+    const changedLines = queryableLines.filter(({ line, key }) => enrichmentKeys.get(line.lineId) !== key);
+    if (!changedLines.length) {
+      setEnrichmentStatus("没有检测到料号、封装、数量或无源参数变化；无需重复查询。");
+      return;
+    }
+    const lines = changedLines.map(({ request }) => request);
     setIsEnriching(true);
     setEnrichmentStatus("");
     try {
@@ -495,8 +559,17 @@ export function BomWorkspace() {
       const matches = payloads.flatMap((payload) => payload.matches);
       const grouped = new Map<string, DigiKeyEnrichmentMatch[]>();
       matches.forEach((match) => grouped.set(match.lineId, [...(grouped.get(match.lineId) ?? []), match]));
-      setEnrichments(grouped);
-      setEnrichmentStatus(`分销商已返回 ${matches.length} 个候选（${lines.length} 行，分 ${batches.length} 批）；结果为外部候选，不会覆盖原始字段。`);
+      setEnrichments((current) => {
+        const next = new Map(current);
+        changedLines.forEach(({ line }) => next.set(line.lineId, grouped.get(line.lineId) ?? []));
+        return next;
+      });
+      setEnrichmentKeys((current) => {
+        const next = new Map(current);
+        changedLines.forEach(({ line, key }) => next.set(line.lineId, key));
+        return next;
+      });
+      setEnrichmentStatus(`分销商已返回 ${matches.length} 个候选（本次仅查询 ${lines.length} 个已修改行，分 ${batches.length} 批）；结果为外部候选，不会覆盖原始字段。`);
     } catch (caught) {
       setEnrichmentStatus(caught instanceof Error ? `分销商查询失败：${caught.message}` : "分销商查询失败，请稍后重试。");
     } finally {
@@ -530,7 +603,7 @@ export function BomWorkspace() {
         </nav>
 
         <main className={`workspace ${status === "ready" ? "has-inspector" : ""}`}>
-          {activeSection === "history" ? <HistoryView tasks={historyTasks} onOpen={(task) => { setResult(task.result); setSelectedLineId(task.result.lines[0]?.lineId); setPatches([]); setReviewedLineIds(new Set()); setEnrichments(new Map()); setEnrichmentStatus(""); setStatus("ready"); setActiveSection("bom"); }} /> : activeSection === "rules" ? <RulesView onOpen={() => setActiveSection("bom")} /> : <>
+          {activeSection === "history" ? <HistoryView tasks={historyTasks} onOpen={(task) => { setResult(task.result); setActiveTaskId(task.taskId); setActiveTaskCreatedAt(task.createdAt); setRawDocument(task.rawDocument); setSourceFile(task.sourceFile); setSelectedLineId(task.result.lines[0]?.lineId); setPatches(task.patches); setResolvedReviewIds(new Set(task.resolvedReviewIds)); setReviewedLineIds(new Set(task.reviewedLineIds)); setEnrichments(new Map(task.enrichments)); setEnrichmentKeys(new Map(task.enrichmentKeys)); setEnrichmentStatus("已加载已保存的原始 BOM、标准化结果和补全候选。"); setStatus("ready"); setActiveSection("bom"); }} /> : activeSection === "rules" ? <RulesView onOpen={() => setActiveSection("bom")} /> : <>
           {status === "idle" && <UploadZone onFile={handleFile} onPaste={handleText} onDemo={() => handleText(DEMO_BOM)} />}
           {status === "processing" && <LoadingView progress={progress} />}
           {status === "error" && <div className="error-view"><TriangleAlert size={34} /><h2>无法处理这份文件</h2><code>{error}</code><p>请检查格式、文件大小或是否已加密，然后重试。</p><button className="button primary" onClick={reset}><RefreshCw size={15} />重新开始</button></div>}
